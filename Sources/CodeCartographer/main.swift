@@ -45,61 +45,6 @@ func findAllSwiftFiles(in directory: URL) -> [URL] {
     return findSwiftFiles(in: directory, includeTests: true)
 }
 
-// MARK: - Analysis
-
-func analyzeFile(at url: URL, relativeTo root: URL) -> FileNode? {
-    guard let sourceText = try? String(contentsOf: url) else {
-        fputs("⚠️ Failed to read \(url.path)\n", stderr)
-        return nil
-    }
-    
-    let tree = Parser.parse(source: sourceText)
-    let analyzer = FileAnalyzer(filePath: url.path, sourceText: sourceText)
-    analyzer.walk(tree)
-    
-    // Make path relative
-    let relativePath = url.path.replacingOccurrences(of: root.path + "/", with: "")
-
-    return FileNode(
-        path: relativePath,
-        imports: Array(analyzer.imports).sorted(),
-        references: analyzer.references
-    )
-}
-
-func buildSummary(from files: [FileNode]) -> AnalysisSummary {
-    var singletonUsage: [String: Int] = [:]
-    var fileRefCounts: [(String, Int)] = []
-    
-    for file in files {
-        fileRefCounts.append((file.path, file.references.count))
-        
-        for ref in file.references {
-            // Extract base singleton name
-            let symbol = ref.symbol
-            if let range = symbol.range(of: ".sharedInstance") {
-                let base = String(symbol[..<range.lowerBound]) + ".sharedInstance()"
-                singletonUsage[base, default: 0] += 1
-            } else {
-                singletonUsage[symbol, default: 0] += 1
-            }
-        }
-    }
-    
-    // Top 10 hotspot files
-    let hotspots = fileRefCounts
-        .sorted { $0.1 > $1.1 }
-        .prefix(10)
-        .filter { $0.1 > 0 }
-        .map { $0.0 }
-    
-    return AnalysisSummary(
-        totalReferences: files.flatMap { $0.references }.count,
-        singletonUsage: singletonUsage,
-        hotspotFiles: Array(hotspots)
-    )
-}
-
 // MARK: - Main
 
 // Available analysis modes with descriptions
@@ -611,150 +556,16 @@ func main() {
     
     // Test coverage analysis
     if testsMode || runAll {
-        if verbose {
-            fputs("🧪 Running test coverage analysis...\n", stderr)
-        }
-        
-        // For test coverage, scan parent directory to find sibling test folders
-        // e.g., "MyApp" has sibling "MyAppTests"
-        let parentURL = rootURL.deletingLastPathComponent()
-        let allFilesIncludingTests = findAllSwiftFiles(in: parentURL)
-        
-        if verbose {
-            fputs("   Scanning parent directory for tests: \(parentURL.path)\n", stderr)
-            fputs("   Found \(allFilesIncludingTests.count) total Swift files (including tests)\n", stderr)
-        }
-        
-        // Also analyze targets in parent directory for test target detection
-        var parentTargetAnalysis: TargetAnalysis? = nil
-        if projectPath != nil {
-            // Use existing target analysis
-            parentTargetAnalysis = targetAnalysis
-        } else {
-            // Try to find xcodeproj in parent directory
-            let fm = FileManager.default
-            if let contents = try? fm.contentsOfDirectory(atPath: parentURL.path) {
-                for item in contents {
-                    if item.hasSuffix(".xcodeproj") {
-                        // Need to append /project.pbxproj to the xcodeproj directory
-                        let projPath = parentURL.appendingPathComponent(item).appendingPathComponent("project.pbxproj").path
-                        if verbose {
-                            fputs("   Found Xcode project: \(item)\n", stderr)
-                        }
-                        let targetAnalyzer = TargetAnalyzer(projectPath: projPath, repoRoot: parentURL.path)
-                        parentTargetAnalysis = targetAnalyzer.analyze()
-                        break
-                    }
-                }
-            }
-        }
-        
-        let testAnalyzer = TestCoverageAnalyzer()
-        let testReport = testAnalyzer.analyze(files: allFilesIncludingTests, relativeTo: parentURL, targetAnalysis: parentTargetAnalysis)
-        
-        if verbose {
-            fputs("   Production files: \(testReport.totalProductionFiles)\n", stderr)
-            fputs("   Test files: \(testReport.totalTestFiles)\n", stderr)
-            fputs("   Active test files: \(testReport.activeTestFiles)\n", stderr)
-            fputs("   Orphaned test files: \(testReport.orphanedTestFiles)\n", stderr)
-            fputs("   Files with tests: \(testReport.filesWithTests)\n", stderr)
-            fputs("   Coverage: \(String(format: "%.1f", testReport.coveragePercentage))%\n", stderr)
-            
-            if !testReport.testTargets.isEmpty {
-                fputs("\n🎯 Test targets:\n", stderr)
-                for target in testReport.testTargets {
-                    let type = target.isUITest ? "UI" : "Unit"
-                    fputs("     \(target.name) (\(type)): \(target.fileCount) files\n", stderr)
-                }
-            }
-            
-            if !testReport.testPatterns.isEmpty {
-                fputs("\n🔬 Test patterns:\n", stderr)
-                for (pattern, count) in testReport.testPatterns.sorted(by: { $0.value > $1.value }).prefix(8) {
-                    fputs("     \(pattern): \(count)\n", stderr)
-                }
-            }
-            
-            if !testReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in testReport.recommendations {
-                    fputs("     • \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if testsMode && !runAll {
-            outputJSON(testReport, to: outputFile)
-            return
-        }
+        var ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        ctx.targetAnalysis = targetAnalysis
+        ctx.projectPath = projectPath
+        if runTestsAnalysis(ctx: ctx, isSpecificMode: testsMode, runAll: runAll) { return }
     }
     
     // Dependency manager analysis (CocoaPods, SPM, Carthage)
     if depsMode || runAll {
-        if verbose {
-            fputs("📦 Running dependency analysis...\n", stderr)
-        }
-        
-        // Find the project root by searching upward for dependency files
-        func findProjectRoot(from start: URL) -> URL {
-            var current = start
-            let fm = FileManager.default
-            for _ in 0..<5 {  // Search up to 5 levels
-                if fm.fileExists(atPath: current.appendingPathComponent("Package.swift").path) ||
-                   fm.fileExists(atPath: current.appendingPathComponent("Podfile").path) ||
-                   fm.fileExists(atPath: current.appendingPathComponent("Cartfile").path) ||
-                   fm.fileExists(atPath: current.appendingPathComponent(".xcodeproj").path) {
-                    return current
-                }
-                let parent = current.deletingLastPathComponent()
-                if parent == current { break }
-                current = parent
-            }
-            return start  // Fallback to original
-        }
-        
-        let projectRoot = findProjectRoot(from: rootURL)
-        let depAnalyzer = DependencyManagerAnalyzer()
-        let depReport = depAnalyzer.analyze(projectRoot: projectRoot)
-        
-        if verbose {
-            fputs("   Podfile: \(depReport.hasPodfile ? "✓" : "✗")\n", stderr)
-            fputs("   Package.swift: \(depReport.hasPackageSwift ? "✓" : "✗")\n", stderr)
-            fputs("   Cartfile: \(depReport.hasCartfile ? "✓" : "✗")\n", stderr)
-            fputs("   Total dependencies: \(depReport.totalDependencies)\n", stderr)
-            
-            if !depReport.pods.isEmpty {
-                fputs("\n📱 CocoaPods (\(depReport.pods.count) unique):\n", stderr)
-                for pod in depReport.pods.sorted(by: { $0.name < $1.name }).prefix(20) {
-                    let version = pod.version ?? "latest"
-                    let subspec = pod.subspecs.isEmpty ? "" : "/\(pod.subspecs.joined(separator: "/"))"
-                    let targets = pod.targets.isEmpty ? "" : " [\(pod.targets.joined(separator: ", "))]"
-                    fputs("     \(pod.name)\(subspec) \(version)\(targets)\n", stderr)
-                }
-                if depReport.pods.count > 20 {
-                    fputs("     ... and \(depReport.pods.count - 20) more\n", stderr)
-                }
-            }
-            
-            if !depReport.podsByTarget.isEmpty {
-                fputs("\n🎯 Pods by target:\n", stderr)
-                for (target, pods) in depReport.podsByTarget.sorted(by: { $0.key < $1.key }) {
-                    fputs("     \(target): \(pods.count) pods\n", stderr)
-                }
-            }
-            
-            if !depReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in depReport.recommendations {
-                    fputs("     • \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if depsMode && !runAll {
-            outputJSON(depReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runDepsAnalysis(ctx: ctx, isSpecificMode: depsMode, runAll: runAll) { return }
     }
     
     // Core Data analysis
@@ -998,51 +809,9 @@ func main() {
     }
     
     if singletonsMode || runAll {
-        var nodes: [FileNode] = []
-        
-        if verbose {
-            fputs("📊 Running singleton analysis...\n", stderr)
-        }
-        
-        for (index, fileURL) in swiftFiles.enumerated() {
-            if verbose && index % 100 == 0 && index > 0 {
-                fputs("   Analyzing... \(index)/\(swiftFiles.count)\n", stderr)
-            }
-            
-            if let node = analyzeFile(at: fileURL, relativeTo: rootURL) {
-                if !node.references.isEmpty || !node.imports.isEmpty {
-                    nodes.append(node)
-                }
-            }
-        }
-        
-        let summary = buildSummary(from: nodes)
-        
-        let dateFormatter = ISO8601DateFormatter()
-        let result = ExtendedAnalysisResult(
-            analyzedAt: dateFormatter.string(from: Date()),
-            rootPath: rootPath,
-            fileCount: swiftFiles.count,
-            files: nodes.sorted { $0.references.count > $1.references.count },
-            summary: summary,
-            targets: targetAnalysis
-        )
-        
-        if verbose {
-            fputs("\n📈 Summary:\n", stderr)
-            fputs("   Total files analyzed: \(swiftFiles.count)\n", stderr)
-            fputs("   Files with references: \(nodes.count)\n", stderr)
-            fputs("   Total references: \(summary.totalReferences)\n", stderr)
-            fputs("\n🔥 Top singletons:\n", stderr)
-            for (symbol, count) in summary.singletonUsage.sorted(by: { $0.value > $1.value }).prefix(10) {
-                fputs("   \(count)x \(symbol)\n", stderr)
-            }
-        }
-        
-        if singletonsMode && !runAll {
-            outputJSON(result, to: outputFile)
-            return
-        }
+        var ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        ctx.targetAnalysis = targetAnalysis
+        if runSingletonsAnalysis(ctx: ctx, isSpecificMode: singletonsMode, runAll: runAll) { return }
     }
 }
 
