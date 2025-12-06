@@ -87,11 +87,13 @@ func printHelp() {
     CodeCartographer - Swift Static Analyzer for AI-Assisted Refactoring
     
     Usage: codecart <path> <mode> [options]
+           codecart serve [path] [--verbose]    Start MCP server for AI assistants
     
     Quick Start:
       codecart /path/to/project --list              Show all available analysis modes
       codecart /path/to/project --smells --verbose  Run code smell analysis
       codecart /path/to/project --all --verbose     Run all analyses
+      codecart serve /path/to/project               Start MCP server (JSON-RPC over stdio)
     
     Analysis Modes (\(analysisModes.count) available):
     """)
@@ -110,12 +112,18 @@ func printHelp() {
       --list             Show all available analysis modes
       --help, -h         Show this help message
     
+    MCP Server:
+      codecart serve [path]              Start as MCP server (JSON-RPC over stdio)
+                                         Connects to Claude Desktop, Cursor, Windsurf, etc.
+      --verbose                          Log MCP messages to stderr
+    
     Examples:
       codecart /path/to/project --smells --verbose
       codecart /path/to/project --auth-migration --verbose
       codecart /path/to/project --functions --output report.json
       codecart /path/to/project --tests --verbose
       codecart /path/to/project --all --project "App.xcodeproj" --verbose
+      codecart serve /path/to/project    Start MCP server for AI integration
     """)
 }
 
@@ -160,6 +168,20 @@ func main() {
     if args.contains("--version") || args.contains("-v") {
         print("CodeCartographer v1.0.0")
         print("Swift Static Analyzer for AI-Assisted Refactoring")
+        return
+    }
+    
+    // MCP Server mode
+    if args.count >= 2 && args[1] == "serve" {
+        let projectPath: String
+        if args.count >= 3 && !args[2].hasPrefix("-") {
+            projectPath = args[2]
+        } else {
+            projectPath = FileManager.default.currentDirectoryPath
+        }
+        
+        let verbose = args.contains("--verbose")
+        runMCPServer(projectPath: projectPath, verbose: verbose)
         return
     }
     

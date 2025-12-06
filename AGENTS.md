@@ -2,7 +2,30 @@
 
 This guide helps AI coding assistants effectively use CodeCartographer to understand and refactor Swift codebases.
 
-## Quick Reference
+## MCP Server (Preferred for AI Agents)
+
+If CodeCartographer is configured as an MCP server, you have direct access to these tools:
+
+| Tool | Use When |
+|------|----------|
+| `get_summary` | Starting analysis - get project health overview |
+| `analyze_file` | Deep-diving into a specific file |
+| `find_smells` | Looking for code quality issues |
+| `find_god_functions` | Finding functions that need refactoring |
+| `check_impact` | Before modifying a symbol - see blast radius |
+| `suggest_refactoring` | Getting extraction suggestions |
+| `track_property` | Finding all uses of a property (migration planning) |
+| `find_calls` | Finding method call patterns |
+| `read_source` | Reading specific code sections |
+
+**Workflow with MCP:**
+1. Call `get_summary` to understand project health
+2. Call `find_god_functions` to find refactoring targets
+3. Call `suggest_refactoring` with specific file path
+4. Call `read_source` to see the actual code
+5. Call `check_impact` before making changes
+
+## CLI Quick Reference
 
 ```bash
 # Get overall codebase health (start here)

@@ -201,6 +201,77 @@ Feed CodeCartographer output to AI coding assistants to provide context about:
 - Audit accessibility support
 - Identify god functions needing refactoring
 
+## MCP Server (AI Integration)
+
+CodeCartographer can run as an MCP (Model Context Protocol) server, enabling AI assistants like Claude, Cursor, and Windsurf to directly analyze your Swift codebase.
+
+### Start the Server
+
+```bash
+# From your project directory
+codecart serve .
+
+# Or specify a path
+codecart serve /path/to/swift/project
+
+# With verbose logging (for debugging)
+codecart serve /path/to/project --verbose
+```
+
+### Configure Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "codecartographer": {
+      "command": "/path/to/.build/debug/codecart",
+      "args": ["serve", "/path/to/your/project"]
+    }
+  }
+}
+```
+
+### Configure Cursor/Windsurf
+
+Add to your MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "codecartographer": {
+      "command": "codecart",
+      "args": ["serve", "."]
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_summary` | Quick project health overview |
+| `analyze_file` | Single file health check |
+| `find_smells` | Code smell analysis |
+| `find_god_functions` | Large/complex functions |
+| `check_impact` | Blast radius for symbol changes |
+| `suggest_refactoring` | Extraction opportunities |
+| `track_property` | Find property accesses |
+| `find_calls` | Find method calls |
+| `list_files` | List Swift files |
+| `read_source` | Read file contents |
+| `invalidate_cache` | Clear cached results |
+| `rescan_project` | Rescan for file changes |
+
+### Performance
+
+The MCP server uses intelligent caching:
+- Files are hashed and only re-parsed when changed
+- Analysis results are cached per-file
+- ASTs are parsed lazily on first access
+
 ## Requirements
 
 - Swift 5.9+
