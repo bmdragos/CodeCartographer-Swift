@@ -820,35 +820,32 @@ class MCPServer {
     }
     
     private func executeAnalyzeFile(path: String) throws -> String {
-        let matches = cache.fileURLs.filter {
-            $0.lastPathComponent == path || $0.path.hasSuffix(path)
-        }
+        let parsedFiles = cache.getFiles(matching: path)
         
-        guard !matches.isEmpty else {
+        guard !parsedFiles.isEmpty else {
             throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path)"])
         }
         
-        if matches.count > 1 {
-            let paths = matches.map { $0.path.replacingOccurrences(of: projectRoot.path + "/", with: "") }
-            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ambiguous path '\(path)' matches \(matches.count) files: \(paths.joined(separator: ", "))"])
+        if parsedFiles.count > 1 {
+            let paths = parsedFiles.map { $0.relativePath }
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Ambiguous path '\(path)' matches \(parsedFiles.count) files: \(paths.joined(separator: ", "))"])
         }
         
-        let fileURL = matches[0]
-        let singleFile = [fileURL]
+        let singleFile = parsedFiles
         
         let smellAnalyzer = CodeSmellAnalyzer()
-        let smellReport = smellAnalyzer.analyze(files: singleFile, relativeTo: projectRoot)
+        let smellReport = smellAnalyzer.analyze(parsedFiles: singleFile)
         
         let metricsAnalyzer = FunctionMetricsAnalyzer()
-        let metricsReport = metricsAnalyzer.analyze(files: singleFile, relativeTo: projectRoot)
+        let metricsReport = metricsAnalyzer.analyze(parsedFiles: singleFile)
         
         let retainAnalyzer = RetainCycleAnalyzer()
-        let retainReport = retainAnalyzer.analyze(files: singleFile, relativeTo: projectRoot)
+        let retainReport = retainAnalyzer.analyze(parsedFiles: singleFile)
         
         let refactorAnalyzer = RefactoringAnalyzer()
-        let refactorReport = refactorAnalyzer.analyze(files: singleFile, relativeTo: projectRoot)
+        let refactorReport = refactorAnalyzer.analyze(parsedFiles: singleFile)
         
-        let lineCount = (try? String(contentsOf: fileURL))?.components(separatedBy: "\n").count ?? 0
+        let lineCount = singleFile[0].sourceText.components(separatedBy: "\n").count
         
         var score = 100
         score -= min(30, smellReport.totalSmells * 2)
@@ -921,14 +918,16 @@ class MCPServer {
     }
     
     private func executeTrackProperty(pattern: String) throws -> String {
+        let parsedFiles = cache.parsedFiles
         let analyzer = PropertyAccessAnalyzer()
-        let report = analyzer.analyze(files: cache.fileURLs, relativeTo: projectRoot, targetPattern: pattern)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, targetPattern: pattern)
         return encodeToJSON(report)
     }
     
     private func executeFindCalls(pattern: String) throws -> String {
+        let parsedFiles = cache.parsedFiles
         let analyzer = MethodCallAnalyzer()
-        let report = analyzer.analyze(files: cache.fileURLs, relativeTo: projectRoot, pattern: pattern)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, pattern: pattern)
         return encodeToJSON(report)
     }
     
@@ -1041,88 +1040,88 @@ class MCPServer {
     }
     
     private func executeFindTypes(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = DependencyGraphAnalyzer()
-        let report = analyzer.analyzeTypes(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyzeTypes(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindTechDebt(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = TechDebtAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindDelegates(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let depAnalyzer = DependencyGraphAnalyzer()
-        let typeMap = depAnalyzer.analyzeTypes(files: files, relativeTo: projectRoot)
+        let typeMap = depAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
         let analyzer = DelegateAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot, typeMap: typeMap)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, typeMap: typeMap)
         return encodeToJSON(report)
     }
     
     private func executeFindUnusedCode(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = UnusedCodeAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot, targetFiles: nil)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, targetFiles: nil)
         return encodeToJSON(report)
     }
     
     private func executeFindNetworkCalls(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = NetworkAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindReactive(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ReactiveAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindViewControllers(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ViewControllerAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindLocalizationIssues(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = LocalizationAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindAccessibilityIssues(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = AccessibilityAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeFindThreadingIssues(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ThreadSafetyAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeAnalyzeSwiftUI(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = SwiftUIAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeAnalyzeUIKit(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = UIKitAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
@@ -1142,16 +1141,16 @@ class MCPServer {
     }
     
     private func executeAnalyzeCoreData(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = CoreDataAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     
     private func executeAnalyzeDocs(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = DocumentationAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
         return encodeToJSON(report)
     }
     

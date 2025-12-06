@@ -84,14 +84,11 @@ class TechDebtAnalyzer {
         ("TEMPORARY:", .hack),
     ]
     
-    func analyze(files: [URL], relativeTo root: URL) -> TechDebtReport {
+    func analyze(parsedFiles: [ParsedFile]) -> TechDebtReport {
         var items: [TechDebtItem] = []
         
-        for fileURL in files {
-            guard let content = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let lines = content.components(separatedBy: .newlines)
+        for file in parsedFiles {
+            let lines = file.sourceText.components(separatedBy: .newlines)
             var currentFunction: String? = nil
             
             for (index, line) in lines.enumerated() {
@@ -115,7 +112,7 @@ class TechDebtAnalyzer {
                             // Extract the content after the marker
                             let content = extractDebtContent(from: line, marker: pattern)
                             items.append(TechDebtItem(
-                                file: relativePath,
+                                file: file.relativePath,
                                 line: lineNum,
                                 type: debtType,
                                 content: content,
@@ -149,6 +146,11 @@ class TechDebtAnalyzer {
             items: items.sorted { ($0.file, $0.line) < ($1.file, $1.line) },
             hotspotFiles: Array(hotspots)
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> TechDebtReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
     
     private func extractDebtContent(from line: String, marker: String) -> String {
