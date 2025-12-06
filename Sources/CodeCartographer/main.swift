@@ -123,6 +123,7 @@ let analysisModes: [(flag: String, name: String, description: String)] = [
     ("--docs", "Documentation", "Documentation coverage for public APIs"),
     ("--retain-cycles", "Retain Cycles", "Potential memory leaks and retain cycles"),
     ("--refactor", "Refactoring", "God functions with extraction suggestions"),
+    ("--api", "API Surface", "Full type signatures, methods, properties"),
     ("--property TARGET", "Property Access", "Track all accesses to a specific pattern"),
     ("--impact SYMBOL", "Impact Analysis", "Analyze blast radius of changing a symbol"),
     ("--checklist", "Migration Checklist", "Generate phased migration plan from auth analysis"),
@@ -266,6 +267,7 @@ func main() {
     let docsMode = args.contains("--docs")
     let retainCyclesMode = args.contains("--retain-cycles")
     let refactorMode = args.contains("--refactor")
+    let apiMode = args.contains("--api")
     let runAll = args.contains("--all")
     
     // Property tracking target
@@ -1178,6 +1180,58 @@ func main() {
         
         if refactorMode && !runAll {
             outputJSON(refactorReport, to: outputFile)
+            return
+        }
+    }
+    
+    // API surface analysis - full type signatures
+    if apiMode || runAll {
+        if verbose {
+            fputs("📋 Running API surface analysis...\n", stderr)
+        }
+        
+        let apiAnalyzer = APIAnalyzer()
+        let apiReport = apiAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
+        
+        if verbose {
+            fputs("   Types: \(apiReport.types.count)\n", stderr)
+            fputs("   Global functions: \(apiReport.globalFunctions.count)\n", stderr)
+            fputs("   Public APIs: \(apiReport.totalPublicAPIs)\n", stderr)
+            
+            // Show analyzers specifically (useful for refactoring)
+            let analyzers = apiReport.types.filter { $0.name.hasSuffix("Analyzer") }
+            if !analyzers.isEmpty {
+                fputs("\n🔧 Analyzer APIs:\n", stderr)
+                for analyzer in analyzers.prefix(10) {
+                    fputs("   \(analyzer.name):\n", stderr)
+                    for method in analyzer.methods.filter({ $0.name == "analyze" }) {
+                        let params = method.parameters.map { "\($0.name): \($0.type)" }.joined(separator: ", ")
+                        let ret = method.returnType ?? "Void"
+                        fputs("     func \(method.name)(\(params)) -> \(ret)\n", stderr)
+                    }
+                }
+            }
+            
+            // Show Report types (useful for understanding output)
+            let reports = apiReport.types.filter { $0.name.hasSuffix("Report") }
+            if !reports.isEmpty {
+                fputs("\n📊 Report types (\(reports.count)):\n", stderr)
+                for report in reports.prefix(10) {
+                    let props = report.properties.map { $0.name }.prefix(5).joined(separator: ", ")
+                    fputs("   \(report.name): \(props)...\n", stderr)
+                }
+            }
+            
+            if !apiReport.recommendations.isEmpty {
+                fputs("\n💡 Recommendations:\n", stderr)
+                for rec in apiReport.recommendations {
+                    fputs("     • \(rec)\n", stderr)
+                }
+            }
+        }
+        
+        if apiMode && !runAll {
+            outputJSON(apiReport, to: outputFile)
             return
         }
     }
