@@ -376,68 +376,18 @@ func main() {
     
     // Delegate wiring analysis
     if delegatesMode || runAll {
-        if verbose {
-            fputs("🔗 Running delegate wiring analysis...\n", stderr)
-        }
-        
-        // Need type map for this
-        let depAnalyzer = DependencyGraphAnalyzer()
-        let typeMap = depAnalyzer.analyzeTypes(files: swiftFiles, relativeTo: rootURL)
-        
-        let delegateAnalyzer = DelegateAnalyzer()
-        let delegateReport = delegateAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL, typeMap: typeMap)
-        
-        if verbose {
-            fputs("   Total delegate assignments: \(delegateReport.totalDelegateAssignments)\n", stderr)
-            fputs("   Delegate protocols found: \(delegateReport.delegateProtocols.count)\n", stderr)
-            fputs("   Potential issues: \(delegateReport.potentialIssues.count)\n", stderr)
-            
-            if !delegateReport.delegateProtocols.isEmpty {
-                fputs("\n📋 Top delegate protocols:\n", stderr)
-                for proto in delegateReport.delegateProtocols.prefix(5) {
-                    fputs("     \(proto.protocolName): \(proto.implementers.count) implementers\n", stderr)
-                }
-            }
-        }
-        
-        if delegatesMode && !runAll {
-            outputJSON(delegateReport, to: outputFile)
-            return
-        }
+        var ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        // Note: runDelegatesAnalysis creates typeMap internally if not provided
+        if runDelegatesAnalysis(ctx: ctx, isSpecificMode: delegatesMode, runAll: runAll) { return }
     }
     
     // Unused code analysis
     if unusedMode || runAll {
-        if verbose {
-            fputs("🗑️  Running unused code analysis...\n", stderr)
-        }
-        
-        // Get target files if available
-        var targetFiles: Set<String>? = nil
+        var ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
         if let ta = targetAnalysis {
-            targetFiles = Set(ta.targets.flatMap { $0.files })
+            ctx.targetFiles = Set(ta.targets.flatMap { $0.files })
         }
-        
-        let unusedAnalyzer = UnusedCodeAnalyzer()
-        let unusedReport = unusedAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL, targetFiles: targetFiles)
-        
-        if verbose {
-            fputs("   Potentially unused types: \(unusedReport.potentiallyUnusedTypes.count)\n", stderr)
-            fputs("   Potentially unused functions: \(unusedReport.potentiallyUnusedFunctions.count)\n", stderr)
-            fputs("   Estimated dead lines: ~\(unusedReport.summary.estimatedDeadLines)\n", stderr)
-            
-            if !unusedReport.potentiallyUnusedTypes.isEmpty {
-                fputs("\n🗑️  Sample unused types:\n", stderr)
-                for item in unusedReport.potentiallyUnusedTypes.prefix(10) {
-                    fputs("     \(item.name) (\(item.kind)) in \(item.file)\n", stderr)
-                }
-            }
-        }
-        
-        if unusedMode && !runAll {
-            outputJSON(unusedReport, to: outputFile)
-            return
-        }
+        if runUnusedAnalysis(ctx: ctx, isSpecificMode: unusedMode, runAll: runAll) { return }
     }
     
     // Network analysis

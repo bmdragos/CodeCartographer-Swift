@@ -9,6 +9,11 @@ struct AnalysisContext {
     let rootPath: String
     let verbose: Bool
     let outputFile: String?
+    
+    // Optional dependencies for complex analyses
+    var typeMap: TypeMap?
+    var targetFiles: Set<String>?
+    var parentURL: URL?
 }
 
 // MARK: - Analysis Runners
@@ -148,6 +153,71 @@ func runTypesAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool) 
     
     if isSpecificMode && !runAll {
         outputJSON(typeMap, to: ctx.outputFile)
+        return true
+    }
+    return false
+}
+
+func runDelegatesAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool) -> Bool {
+    if ctx.verbose {
+        fputs("🔗 Running delegate wiring analysis...\n", stderr)
+    }
+    
+    // Need typeMap - either passed in or create it
+    let typeMap: TypeMap
+    if let existing = ctx.typeMap {
+        typeMap = existing
+    } else {
+        let depAnalyzer = DependencyGraphAnalyzer()
+        typeMap = depAnalyzer.analyzeTypes(files: ctx.files, relativeTo: ctx.rootURL)
+    }
+    
+    let delegateAnalyzer = DelegateAnalyzer()
+    let delegateReport = delegateAnalyzer.analyze(files: ctx.files, relativeTo: ctx.rootURL, typeMap: typeMap)
+    
+    if ctx.verbose {
+        fputs("   Total delegate assignments: \(delegateReport.totalDelegateAssignments)\n", stderr)
+        fputs("   Delegate protocols found: \(delegateReport.delegateProtocols.count)\n", stderr)
+        fputs("   Potential issues: \(delegateReport.potentialIssues.count)\n", stderr)
+        
+        if !delegateReport.delegateProtocols.isEmpty {
+            fputs("\n📋 Top delegate protocols:\n", stderr)
+            for proto in delegateReport.delegateProtocols.prefix(5) {
+                fputs("     \(proto.protocolName): \(proto.implementers.count) implementers\n", stderr)
+            }
+        }
+    }
+    
+    if isSpecificMode && !runAll {
+        outputJSON(delegateReport, to: ctx.outputFile)
+        return true
+    }
+    return false
+}
+
+func runUnusedAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool) -> Bool {
+    if ctx.verbose {
+        fputs("🗑️  Running unused code analysis...\n", stderr)
+    }
+    
+    let unusedAnalyzer = UnusedCodeAnalyzer()
+    let unusedReport = unusedAnalyzer.analyze(files: ctx.files, relativeTo: ctx.rootURL, targetFiles: ctx.targetFiles)
+    
+    if ctx.verbose {
+        fputs("   Potentially unused types: \(unusedReport.potentiallyUnusedTypes.count)\n", stderr)
+        fputs("   Potentially unused functions: \(unusedReport.potentiallyUnusedFunctions.count)\n", stderr)
+        fputs("   Estimated dead lines: ~\(unusedReport.summary.estimatedDeadLines)\n", stderr)
+        
+        if !unusedReport.potentiallyUnusedTypes.isEmpty {
+            fputs("\n🗑️  Sample unused types:\n", stderr)
+            for item in unusedReport.potentiallyUnusedTypes.prefix(10) {
+                fputs("     \(item.name) (\(item.kind)) in \(item.file)\n", stderr)
+            }
+        }
+    }
+    
+    if isSpecificMode && !runAll {
+        outputJSON(unusedReport, to: ctx.outputFile)
         return true
     }
     return false
@@ -442,10 +512,22 @@ func runRefactoringAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: 
         
         if !refactorReport.godFunctions.isEmpty {
             fputs("\n🔥 God functions (by impact):\n", stderr)
-            for godFunc in refactorReport.godFunctions.prefix(10) {
+            for godFunc in refactorReport.godFunctions.prefix(5) {
                 fputs("     \(godFunc.file):\(godFunc.name) - \(godFunc.lineCount) lines, complexity \(godFunc.complexity)\n", stderr)
-                for extraction in godFunc.extractableBlocks.prefix(3) {
-                    fputs("       → Extract: \(extraction.suggestedName)() [lines \(extraction.startLine)-\(extraction.endLine)]\n", stderr)
+                for extraction in godFunc.extractableBlocks.prefix(5) {
+                    let diffIcon = extraction.extractionDifficulty == .hard ? "⚠️" : (extraction.extractionDifficulty == .medium ? "📦" : "✅")
+                    fputs("       \(diffIcon) \(extraction.suggestedName)() [lines \(extraction.startLine)-\(extraction.endLine)] [\(extraction.extractionDifficulty.rawValue)]\n", stderr)
+                    
+                    // Show analyzer usage
+                    for analyzer in extraction.usedAnalyzers {
+                        let ret = analyzer.returnType ?? "?"
+                        fputs("          Uses: \(analyzer.analyzerType).\(analyzer.methodCalled)() -> \(ret)\n", stderr)
+                    }
+                    
+                    // Show special dependencies
+                    for dep in extraction.specialDependencies {
+                        fputs("          ⚠️ Needs: \(dep)\n", stderr)
+                    }
                 }
             }
         }

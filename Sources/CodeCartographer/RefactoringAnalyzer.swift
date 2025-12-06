@@ -60,11 +60,22 @@ struct ExtractableBlock: Codable {
     let extractionDifficulty: Difficulty
     let reason: String
     
+    // Enhanced context for AI-assisted refactoring
+    var usedAnalyzers: [AnalyzerUsage]  // Analyzers called in this block
+    var specialDependencies: [String]   // e.g., "typeMap from DependencyGraphAnalyzer"
+    var codePreview: String?            // First few lines of the block
+    
     enum Difficulty: String, Codable {
         case easy = "easy"      // No shared state, clear boundaries
         case medium = "medium"  // Some parameters needed
-        case hard = "hard"      // Shared mutable state
+        case hard = "hard"      // Shared mutable state, special dependencies
     }
+}
+
+struct AnalyzerUsage: Codable {
+    let analyzerType: String      // e.g., "CodeSmellAnalyzer"
+    let methodCalled: String      // e.g., "analyze"
+    let returnType: String?       // e.g., "CodeSmellReport"
 }
 
 struct ExtractionOpportunity: Codable {
@@ -279,19 +290,25 @@ final class FunctionStructureVisitor: SyntaxVisitor {
                 if trimmed.hasPrefix("if ") {
                     let parts = trimmed.dropFirst(3).components(separatedBy: " ")
                     if let modeName = parts.first {
-                        // Close previous block
+                        // Close previous block and analyze it
                         if let modeStart = currentModeStart, let name = currentModeName {
                             let blockEnd = lineIdx
+                            let blockLines = getBlockLines(from: modeStart, to: blockEnd)
+                            let (analyzers, deps, difficulty) = analyzeBlockContent(blockLines)
+                            
                             suggestions.append(ExtractableBlock(
                                 suggestedName: "run\(name.replacingOccurrences(of: "Mode", with: "").capitalized)Analysis",
                                 startLine: modeStart,
                                 endLine: blockEnd,
                                 lineCount: blockEnd - modeStart + 1,
                                 complexity: 0,
-                                parameters: ["files: [URL]", "root: URL", "options: CLIOptions"],
-                                returns: nil,
-                                extractionDifficulty: .medium,
-                                reason: "Analysis mode block - follows consistent pattern"
+                                parameters: ["ctx: AnalysisContext", "isSpecificMode: Bool", "runAll: Bool"],
+                                returns: "Bool",
+                                extractionDifficulty: difficulty,
+                                reason: deps.isEmpty ? "Standard analysis block" : "Has dependencies: \(deps.joined(separator: ", "))",
+                                usedAnalyzers: analyzers,
+                                specialDependencies: deps,
+                                codePreview: blockLines.prefix(3).joined(separator: "\n")
                             ))
                         }
                         
@@ -304,20 +321,101 @@ final class FunctionStructureVisitor: SyntaxVisitor {
         
         // Add final block
         if let modeStart = currentModeStart, let name = currentModeName {
+            let blockLines = getBlockLines(from: modeStart, to: endLine)
+            let (analyzers, deps, difficulty) = analyzeBlockContent(blockLines)
+            
             suggestions.append(ExtractableBlock(
                 suggestedName: "run\(name.replacingOccurrences(of: "Mode", with: "").capitalized)Analysis",
                 startLine: modeStart,
                 endLine: endLine,
                 lineCount: endLine - modeStart + 1,
                 complexity: 0,
-                parameters: ["files: [URL]", "root: URL", "options: CLIOptions"],
-                returns: nil,
-                extractionDifficulty: .medium,
-                reason: "Analysis mode block - follows consistent pattern"
+                parameters: ["ctx: AnalysisContext", "isSpecificMode: Bool", "runAll: Bool"],
+                returns: "Bool",
+                extractionDifficulty: difficulty,
+                reason: deps.isEmpty ? "Standard analysis block" : "Has dependencies: \(deps.joined(separator: ", "))",
+                usedAnalyzers: analyzers,
+                specialDependencies: deps,
+                codePreview: blockLines.prefix(3).joined(separator: "\n")
             ))
         }
         
         return suggestions
+    }
+    
+    private func getBlockLines(from start: Int, to end: Int) -> [String] {
+        let startIdx = max(0, start - 1)
+        let endIdx = min(sourceLines.count, end)
+        return Array(sourceLines[startIdx..<endIdx])
+    }
+    
+    private func analyzeBlockContent(_ lines: [String]) -> (analyzers: [AnalyzerUsage], dependencies: [String], difficulty: ExtractableBlock.Difficulty) {
+        var analyzers: [AnalyzerUsage] = []
+        var dependencies: [String] = []
+        var difficulty: ExtractableBlock.Difficulty = .easy
+        
+        let content = lines.joined(separator: "\n")
+        
+        // Detect analyzer instantiations: "let analyzer = SomeAnalyzer()"
+        let analyzerPattern = #"let\s+(\w+)\s*=\s*(\w+Analyzer)\(\)"#
+        if let regex = try? NSRegularExpression(pattern: analyzerPattern) {
+            let range = NSRange(content.startIndex..., in: content)
+            let matches = regex.matches(in: content, range: range)
+            for match in matches {
+                if let typeRange = Range(match.range(at: 2), in: content) {
+                    let analyzerType = String(content[typeRange])
+                    
+                    // Detect the analyze call and return type
+                    var returnType: String? = nil
+                    let reportPattern = "let\\s+(\\w+)\\s*=\\s*\\w+\\.analyze"
+                    if let reportRegex = try? NSRegularExpression(pattern: reportPattern),
+                       let reportMatch = reportRegex.firstMatch(in: content, range: range),
+                       let varRange = Range(reportMatch.range(at: 1), in: content) {
+                        let varName = String(content[varRange])
+                        // Infer return type from variable name
+                        if varName.hasSuffix("Report") {
+                            returnType = varName.replacingOccurrences(of: "Report", with: "") + "Report"
+                        } else {
+                            returnType = analyzerType.replacingOccurrences(of: "Analyzer", with: "Report")
+                        }
+                    }
+                    
+                    analyzers.append(AnalyzerUsage(
+                        analyzerType: analyzerType,
+                        methodCalled: "analyze",
+                        returnType: returnType
+                    ))
+                }
+            }
+        }
+        
+        // Detect special dependencies
+        if content.contains("typeMap") || content.contains("analyzeTypes") {
+            dependencies.append("typeMap from DependencyGraphAnalyzer.analyzeTypes()")
+            difficulty = .hard
+        }
+        
+        if content.contains("targetFiles") || content.contains("targetAnalysis") {
+            dependencies.append("targetFiles from targetAnalysis")
+            difficulty = .hard
+        }
+        
+        if content.contains("parentURL") || content.contains("deletingLastPathComponent") {
+            dependencies.append("parentURL (analyzes parent directory)")
+            difficulty = .hard
+        }
+        
+        if content.contains("for (index, fileURL)") || content.contains("for fileURL in") {
+            dependencies.append("iterates over files directly")
+            difficulty = .hard
+        }
+        
+        // If we found analyzers but no special deps, it's medium difficulty
+        if !analyzers.isEmpty && dependencies.isEmpty {
+            difficulty = .medium
+        }
+        
+        return (analyzers, dependencies, difficulty)
     }
     
     private func countComplexity(in text: String) -> Int {
