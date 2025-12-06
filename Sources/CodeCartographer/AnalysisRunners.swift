@@ -518,10 +518,17 @@ func runRefactoringAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: 
                     let diffIcon = extraction.extractionDifficulty == .hard ? "⚠️" : (extraction.extractionDifficulty == .medium ? "📦" : "✅")
                     fputs("       \(diffIcon) \(extraction.suggestedName)() [lines \(extraction.startLine)-\(extraction.endLine)] [\(extraction.extractionDifficulty.rawValue)]\n", stderr)
                     
-                    // Show analyzer usage
+                    // Show analyzer usage with full API context
                     for analyzer in extraction.usedAnalyzers {
                         let ret = analyzer.returnType ?? "?"
-                        fputs("          Uses: \(analyzer.analyzerType).\(analyzer.methodCalled)() -> \(ret)\n", stderr)
+                        if let sig = analyzer.signature {
+                            fputs("          API: \(analyzer.analyzerType).\(sig) -> \(ret)\n", stderr)
+                        } else {
+                            fputs("          Uses: \(analyzer.analyzerType).\(analyzer.methodCalled)() -> \(ret)\n", stderr)
+                        }
+                        if let props = analyzer.keyProperties, !props.isEmpty {
+                            fputs("          Props: \(props.joined(separator: ", "))\n", stderr)
+                        }
                     }
                     
                     // Show special dependencies

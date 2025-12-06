@@ -76,6 +76,36 @@ struct AnalyzerUsage: Codable {
     let analyzerType: String      // e.g., "CodeSmellAnalyzer"
     let methodCalled: String      // e.g., "analyze"
     let returnType: String?       // e.g., "CodeSmellReport"
+    let signature: String?        // e.g., "analyze(files: [URL], relativeTo: URL)"
+    let keyProperties: [String]?  // e.g., ["totalSmells", "smellsByType", "hotspotFiles"]
+    
+    // Standard analyzer signatures lookup
+    static func standardSignature(for analyzer: String) -> (sig: String, props: [String])? {
+        let lookup: [String: (String, [String])] = [
+            "CodeSmellAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalSmells", "smellsByType", "hotspotFiles"]),
+            "NetworkAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["endpoints", "totalEndpoints", "networkPatterns"]),
+            "ReactiveAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalSubscriptions", "potentialLeaks", "framework"]),
+            "ViewControllerAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["viewControllers", "issues", "heavyLifecycleMethods"]),
+            "LocalizationAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["hardcodedStrings", "localizedStrings", "localizationCoverage"]),
+            "AccessibilityAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalUIElements", "accessibilityCoverage", "issues"]),
+            "ThreadSafetyAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalIssues", "concurrencyPatterns"]),
+            "SwiftUIAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["views", "stateManagement", "swiftUIFileCount"]),
+            "UIKitAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["viewControllers", "patterns", "modernizationScore"]),
+            "CoreDataAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["entities", "patterns", "hasCoreData"]),
+            "DocumentationAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalPublicSymbols", "documentedSymbols", "coveragePercentage"]),
+            "RetainCycleAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["potentialCycles", "delegateIssues", "riskScore"]),
+            "RefactoringAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["godFunctions", "extractionOpportunities"]),
+            "APIAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["types", "globalFunctions", "totalPublicAPIs"]),
+            "TechDebtAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalMarkers", "markersByType", "hotspotFiles"]),
+            "FunctionMetricsAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalFunctions", "godFunctions", "averageComplexity"]),
+            "AuthMigrationAnalyzer": ("analyze(files: [URL], relativeTo: URL)", ["totalAccesses", "accessesByProperty", "migrationPriority"]),
+            "DelegateAnalyzer": ("analyze(files: [URL], relativeTo: URL, typeMap: TypeMap)", ["totalDelegateAssignments", "delegateProtocols", "potentialIssues"]),
+            "UnusedCodeAnalyzer": ("analyze(files: [URL], relativeTo: URL, targetFiles: Set<String>?)", ["potentiallyUnusedTypes", "potentiallyUnusedFunctions"]),
+            "TestCoverageAnalyzer": ("analyze(files: [URL], relativeTo: URL, targetAnalysis: TargetAnalysis?)", ["totalTestFiles", "coveragePercentage", "testTargets"]),
+            "DependencyManagerAnalyzer": ("analyze(projectRoot: URL)", ["pods", "totalDependencies", "recommendations"]),
+        ]
+        return lookup[analyzer]
+    }
 }
 
 struct ExtractionOpportunity: Codable {
@@ -380,10 +410,15 @@ final class FunctionStructureVisitor: SyntaxVisitor {
                         }
                     }
                     
+                    // Look up full signature and key properties
+                    let stdInfo = AnalyzerUsage.standardSignature(for: analyzerType)
+                    
                     analyzers.append(AnalyzerUsage(
                         analyzerType: analyzerType,
                         methodCalled: "analyze",
-                        returnType: returnType
+                        returnType: returnType ?? analyzerType.replacingOccurrences(of: "Analyzer", with: "Report"),
+                        signature: stdInfo?.sig,
+                        keyProperties: stdInfo?.props
                     ))
                 }
             }
