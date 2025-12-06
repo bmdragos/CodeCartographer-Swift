@@ -325,6 +325,11 @@ func main() {
             projectPath = rootPath + "/" + proj + "/project.pbxproj"
         }
     }
+    
+    var targetFilter: String? = nil
+    if let targetIndex = args.firstIndex(of: "--target"), targetIndex + 1 < args.count {
+        targetFilter = args[targetIndex + 1]
+    }
 
     if verbose {
         if let singleFile = singleFileMode {
@@ -335,7 +340,7 @@ func main() {
     }
     
     // Find Swift files - single file or directory scan
-    let swiftFiles: [URL]
+    var swiftFiles: [URL]
     if let singleFile = singleFileMode {
         swiftFiles = [singleFile]
     } else {
@@ -361,6 +366,29 @@ func main() {
                 fputs("   - \(target.name): \(target.files.count) files\n", stderr)
             }
             fputs("   Orphaned files: \(ta.orphanedFiles.count)\n", stderr)
+        }
+    }
+    
+    // Filter to specific target if requested
+    if let targetName = targetFilter {
+        guard let ta = targetAnalysis else {
+            fputs("❌ --target requires --project\n", stderr)
+            exit(1)
+        }
+        
+        guard let target = ta.targets.first(where: { $0.name == targetName }) else {
+            fputs("❌ Target '\(targetName)' not found. Available targets:\n", stderr)
+            for t in ta.targets {
+                fputs("   - \(t.name)\n", stderr)
+            }
+            exit(1)
+        }
+        
+        let targetFileNames = Set(target.files)
+        swiftFiles = swiftFiles.filter { targetFileNames.contains($0.lastPathComponent) }
+        
+        if verbose {
+            fputs("🎯 Filtered to target '\(targetName)': \(swiftFiles.count) files\n", stderr)
         }
     }
     
