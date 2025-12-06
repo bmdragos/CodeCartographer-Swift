@@ -10,14 +10,16 @@ CodeCartographer is a powerful CLI tool that analyzes Swift codebases and output
 # Install
 git clone https://github.com/bmdragos/CodeCartographer-Swift.git
 cd CodeCartographer-Swift
-swift build -c release
+swift build
 
 # See all available modes
-.build/release/codecart --list
+.build/debug/codecart --list
 
 # Run an analysis
-.build/release/codecart /path/to/project --smells --verbose
+.build/debug/codecart /path/to/project --smells --verbose
 ```
+
+> **Note:** Use debug build for now. Release build may crash on Xcode 16.x/Swift 6.x beta due to a compiler optimization bug (CopyPropagation pass). This will be resolved when the toolchain stabilizes.
 
 ## Features
 
