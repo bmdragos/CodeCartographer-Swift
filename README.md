@@ -21,7 +21,7 @@ swift build -c release
 
 ## Features
 
-CodeCartographer provides **22 analysis modes**:
+CodeCartographer provides **30 analysis modes**:
 
 | Mode | Flag | Description |
 |------|------|-------------|
@@ -47,6 +47,14 @@ CodeCartographer provides **22 analysis modes**:
 | Property Access | `--property TARGET` | Track all accesses to a specific pattern |
 | Impact Analysis | `--impact SYMBOL` | Analyze blast radius of changing a symbol |
 | Migration Checklist | `--checklist` | Generate phased migration plan |
+| Core Data | `--coredata` | Core Data model and fetch analysis |
+| Documentation | `--docs` | Documentation coverage audit |
+| Retain Cycles | `--retain-cycles` | Memory leak risk detection |
+| Refactoring | `--refactor` | God function extraction suggestions |
+| API Surface | `--api` | Public API surface analysis |
+| Summary | `--summary` | Compact AI-friendly overview |
+| Health | `--health FILE` | Unified health report for one file |
+| Refactor Detail | `--refactor-detail FILE:START-END` | Detailed extraction info for a code block |
 | All | `--all` | Run all analyses combined |
 
 ## Installation
@@ -93,6 +101,20 @@ codecart /path/to/project --project "MyApp.xcodeproj" --targets-only --verbose
 
 # Run all analyses
 codecart /path/to/project --all --verbose
+
+# AI-friendly summary
+codecart /path/to/project --summary
+
+# Compare with baseline
+codecart /path/to/project --summary --output baseline.json
+# ... make changes ...
+codecart /path/to/project --summary --compare baseline.json
+
+# Get health score for a specific file
+codecart /path/to/project --health ViewController.swift
+
+# Get extraction details for refactoring
+codecart /path/to/project --refactor-detail "main.swift:100-150"
 ```
 
 ## Example Output
