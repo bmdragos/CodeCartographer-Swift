@@ -240,8 +240,35 @@ func main() {
         return
     }
 
-    let rootPath = args[1]
-    let rootURL = URL(fileURLWithPath: rootPath)
+    let inputPath = args[1]
+    let fm = FileManager.default
+    
+    // Validate path exists
+    var isDirectory: ObjCBool = false
+    guard fm.fileExists(atPath: inputPath, isDirectory: &isDirectory) else {
+        fputs("❌ Error: Path does not exist: \(inputPath)\n", stderr)
+        exit(1)
+    }
+    
+    // Handle single file vs directory
+    let rootPath: String
+    let rootURL: URL
+    var singleFileMode: URL? = nil
+    
+    if isDirectory.boolValue {
+        rootPath = inputPath
+        rootURL = URL(fileURLWithPath: inputPath)
+    } else if inputPath.hasSuffix(".swift") {
+        // Single file mode - analyze just this file
+        let fileURL = URL(fileURLWithPath: inputPath)
+        rootPath = fileURL.deletingLastPathComponent().path
+        rootURL = fileURL.deletingLastPathComponent()
+        singleFileMode = fileURL
+    } else {
+        fputs("❌ Error: Path must be a directory or .swift file: \(inputPath)\n", stderr)
+        exit(1)
+    }
+    
     let verbose = args.contains("--verbose")
     let singletonsMode = args.contains("--singletons")
     let targetsOnly = args.contains("--targets-only")
@@ -299,13 +326,23 @@ func main() {
     }
 
     if verbose {
-        fputs("🗺️  CodeCartographer analyzing: \(rootPath)\n", stderr)
+        if let singleFile = singleFileMode {
+            fputs("🗺️  CodeCartographer analyzing: \(singleFile.lastPathComponent)\n", stderr)
+        } else {
+            fputs("🗺️  CodeCartographer analyzing: \(rootPath)\n", stderr)
+        }
     }
     
-    // Find all Swift files once
-    let swiftFiles = findSwiftFiles(in: rootURL)
+    // Find Swift files - single file or directory scan
+    let swiftFiles: [URL]
+    if let singleFile = singleFileMode {
+        swiftFiles = [singleFile]
+    } else {
+        swiftFiles = findSwiftFiles(in: rootURL)
+    }
+    
     if verbose {
-        fputs("📁 Found \(swiftFiles.count) Swift files\n", stderr)
+        fputs("📁 Found \(swiftFiles.count) Swift file\(swiftFiles.count == 1 ? "" : "s")\n", stderr)
     }
     
     // Target analysis
