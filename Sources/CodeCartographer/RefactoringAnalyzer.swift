@@ -569,19 +569,15 @@ extension String {
 
 // MARK: - Refactoring Analyzer
 
-class RefactoringAnalyzer {
+class RefactoringAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> RefactoringReport {
+    func analyze(parsedFiles: [ParsedFile]) -> RefactoringReport {
         var allGodFunctions: [GodFunctionAnalysis] = []
         var allExtractions: [ExtractionOpportunity] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = FunctionStructureVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = FunctionStructureVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allGodFunctions.append(contentsOf: visitor.godFunctions)
             
@@ -590,7 +586,7 @@ class RefactoringAnalyzer {
                 if !godFunc.extractableBlocks.isEmpty {
                     let estimatedReduction = godFunc.extractableBlocks.reduce(0) { $0 + $1.lineCount }
                     allExtractions.append(ExtractionOpportunity(
-                        file: relativePath,
+                        file: file.relativePath,
                         functionName: godFunc.name,
                         suggestedExtractions: godFunc.extractableBlocks,
                         estimatedComplexityReduction: estimatedReduction / 10
@@ -625,5 +621,10 @@ class RefactoringAnalyzer {
             totalComplexityReduction: totalReduction,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> RefactoringReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

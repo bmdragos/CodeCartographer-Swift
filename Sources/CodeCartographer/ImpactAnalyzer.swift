@@ -160,20 +160,16 @@ final class ImpactVisitor: SyntaxVisitor {
 
 class ImpactAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL, targetSymbol: String) -> ImpactReport {
+    func analyze(parsedFiles: [ParsedFile], targetSymbol: String) -> ImpactReport {
         var dependents: [DependentFile] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = ImpactVisitor(filePath: relativePath, sourceText: sourceText, targetSymbol: targetSymbol)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = ImpactVisitor(filePath: file.relativePath, sourceText: file.sourceText, targetSymbol: targetSymbol)
+            visitor.walk(file.ast)
             
             if !visitor.usages.isEmpty {
                 dependents.append(DependentFile(
-                    file: relativePath,
+                    file: file.relativePath,
                     usageCount: visitor.usages.count,
                     usageTypes: Array(visitor.usageTypes),
                     specificUsages: visitor.usages
@@ -222,5 +218,10 @@ class ImpactAnalyzer {
             safeToModify: safeToModify,
             warnings: warnings
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL, targetSymbol: String) -> ImpactReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles, targetSymbol: targetSymbol)
     }
 }

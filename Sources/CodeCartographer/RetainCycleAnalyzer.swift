@@ -274,9 +274,9 @@ final class RetainCycleVisitor: SyntaxVisitor {
 
 // MARK: - Retain Cycle Analyzer
 
-class RetainCycleAnalyzer {
+class RetainCycleAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> RetainCycleReport {
+    func analyze(parsedFiles: [ParsedFile]) -> RetainCycleReport {
         var allCycles: [PotentialRetainCycle] = []
         var allCaptures: [ClosureCaptureInfo] = []
         var allDelegateIssues: [DelegateRetainIssue] = []
@@ -286,13 +286,9 @@ class RetainCycleAnalyzer {
             notificationsAdded: 0, notificationsRemoved: 0, escapingClosures: 0
         )
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = RetainCycleVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = RetainCycleVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allCycles.append(contentsOf: visitor.potentialCycles)
             allCaptures.append(contentsOf: visitor.closureCaptures)
@@ -360,5 +356,10 @@ class RetainCycleAnalyzer {
             riskScore: riskScore,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> RetainCycleReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

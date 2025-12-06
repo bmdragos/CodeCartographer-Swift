@@ -285,28 +285,24 @@ final class ComplexityVisitor: SyntaxVisitor {
 
 // MARK: - Function Metrics Analyzer
 
-class FunctionMetricsAnalyzer {
+class FunctionMetricsAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> FunctionMetricsReport {
+    func analyze(parsedFiles: [ParsedFile]) -> FunctionMetricsReport {
         var allFunctions: [FunctionMetric] = []
         var fileMetrics: [FileMetric] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = FunctionMetricsVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = FunctionMetricsVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allFunctions.append(contentsOf: visitor.functions)
             
-            let totalLines = sourceText.components(separatedBy: .newlines).count
+            let totalLines = file.sourceText.components(separatedBy: .newlines).count
             let avgLength = visitor.functions.isEmpty ? 0 : 
                 Double(visitor.functions.map { $0.lineCount }.reduce(0, +)) / Double(visitor.functions.count)
             
             fileMetrics.append(FileMetric(
-                file: relativePath,
+                file: file.relativePath,
                 totalLines: totalLines,
                 functionCount: visitor.functions.count,
                 classCount: visitor.classCount,
@@ -335,5 +331,10 @@ class FunctionMetricsAnalyzer {
             godFunctions: godFunctions,
             fileMetrics: fileMetrics.sorted { $0.totalLines > $1.totalLines }
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> FunctionMetricsReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

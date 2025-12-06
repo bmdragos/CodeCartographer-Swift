@@ -197,143 +197,18 @@ struct MCPProperty: Codable {
 
 // MARK: - Project Cache
 
-struct CachedFile {
-    let path: String
-    let relativePath: String
-    var contentHash: String
-    var ast: SourceFileSyntax?
-    var sourceText: String
-    var lastModified: Date
-    var analysisCache: [String: Data]  // analyzer name -> cached JSON result
-    
-    mutating func invalidate() {
-        ast = nil
-        analysisCache.removeAll()
-    }
-}
-
-class ProjectCache {
-    let projectRoot: URL
-    private(set) var files: [String: CachedFile] = [:]  // relative path -> cached file
-    private(set) var swiftFileURLs: [URL] = []
-    private(set) var lastScanTime: Date?
-    
-    init(projectRoot: URL) {
-        self.projectRoot = projectRoot
-    }
-    
-    /// Scan for Swift files and build initial cache structure
-    func scan(verbose: Bool = false) {
-        let startTime = Date()
-        swiftFileURLs = findSwiftFiles(in: projectRoot)
-        
-        if verbose {
-            fputs("[MCP] Scanned \(swiftFileURLs.count) Swift files in \(String(format: "%.2f", Date().timeIntervalSince(startTime)))s\n", stderr)
-        }
-        
-        // Build cache entries (but don't parse yet - lazy parsing)
-        for url in swiftFileURLs {
-            let relativePath = url.path.replacingOccurrences(of: projectRoot.path + "/", with: "")
-            
-            // Check if file changed
-            if let existing = files[relativePath] {
-                if let hash = hashFile(url), hash == existing.contentHash {
-                    continue  // File unchanged, keep cache
-                }
-            }
-            
-            // Create new cache entry (lazy - don't parse AST yet)
-            if let sourceText = try? String(contentsOf: url),
-               let hash = hashFile(url) {
-                files[relativePath] = CachedFile(
-                    path: url.path,
-                    relativePath: relativePath,
-                    contentHash: hash,
-                    ast: nil,
-                    sourceText: sourceText,
-                    lastModified: Date(),
-                    analysisCache: [:]
-                )
-            }
-        }
-        
-        lastScanTime = Date()
-    }
-    
-    /// Get or parse AST for a file
-    func getAST(for relativePath: String) -> SourceFileSyntax? {
-        guard var cached = files[relativePath] else { return nil }
-        
-        if cached.ast == nil {
-            cached.ast = Parser.parse(source: cached.sourceText)
-            files[relativePath] = cached
-        }
-        
-        return cached.ast
-    }
-    
-    /// Get source text for a file
-    func getSourceText(for relativePath: String) -> String? {
-        return files[relativePath]?.sourceText
-    }
-    
-    /// Invalidate a specific file
-    func invalidate(path: String) {
-        // Try both absolute and relative paths
-        if files[path] != nil {
-            files[path]?.invalidate()
-        } else {
-            let relativePath = path.replacingOccurrences(of: projectRoot.path + "/", with: "")
-            files[relativePath]?.invalidate()
-        }
-    }
-    
-    /// Invalidate all cached data
-    func invalidateAll() {
-        for key in files.keys {
-            files[key]?.invalidate()
-        }
-    }
-    
-    /// Get cached analysis result or nil
-    func getCachedAnalysis<T: Decodable>(for relativePath: String, analyzer: String, as type: T.Type) -> T? {
-        guard let cached = files[relativePath],
-              let data = cached.analysisCache[analyzer],
-              let result = try? JSONDecoder().decode(type, from: data) else {
-            return nil
-        }
-        return result
-    }
-    
-    /// Store analysis result in cache
-    func cacheAnalysis<T: Encodable>(for relativePath: String, analyzer: String, result: T) {
-        guard files[relativePath] != nil,
-              let data = try? JSONEncoder().encode(result) else {
-            return
-        }
-        files[relativePath]?.analysisCache[analyzer] = data
-    }
-    
-    private func hashFile(_ url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        // Simple hash using the data's hash value (fast but not cryptographic)
-        // For a real implementation, use SHA256
-        return String(data.hashValue, radix: 16)
-    }
-}
-
 // MARK: - MCP Server
 
 class MCPServer {
     let projectRoot: URL
-    let cache: ProjectCache
+    let cache: ASTCache
     let verbose: Bool
     
     private var isInitialized = false
     
     init(projectRoot: URL, verbose: Bool = false) {
         self.projectRoot = projectRoot
-        self.cache = ProjectCache(projectRoot: projectRoot)
+        self.cache = ASTCache(rootURL: projectRoot)
         self.verbose = verbose
     }
     
@@ -344,7 +219,7 @@ class MCPServer {
             fputs("[MCP] Project root: \(projectRoot.path)\n", stderr)
         }
         
-        // Initial scan
+        // Initial scan with AST caching
         cache.scan(verbose: verbose)
         
         if verbose {
@@ -877,19 +752,19 @@ class MCPServer {
     // MARK: - Tool Implementations
     
     private func executeGetSummary() throws -> String {
-        let files = cache.swiftFileURLs
+        let parsedFiles = cache.parsedFiles  // Uses cached ASTs!
         
         let smellAnalyzer = CodeSmellAnalyzer()
-        let smellReport = smellAnalyzer.analyze(files: files, relativeTo: projectRoot)
+        let smellReport = smellAnalyzer.analyze(parsedFiles: parsedFiles)
         
         let metricsAnalyzer = FunctionMetricsAnalyzer()
-        let metricsReport = metricsAnalyzer.analyze(files: files, relativeTo: projectRoot)
+        let metricsReport = metricsAnalyzer.analyze(parsedFiles: parsedFiles)
         
         let refactorAnalyzer = RefactoringAnalyzer()
-        let refactorReport = refactorAnalyzer.analyze(files: files, relativeTo: projectRoot)
+        let refactorReport = refactorAnalyzer.analyze(parsedFiles: parsedFiles)
         
         let retainAnalyzer = RetainCycleAnalyzer()
-        let retainReport = retainAnalyzer.analyze(files: files, relativeTo: projectRoot)
+        let retainReport = retainAnalyzer.analyze(parsedFiles: parsedFiles)
         
         struct Summary: Codable {
             let analyzedAt: String
@@ -929,7 +804,7 @@ class MCPServer {
         
         let summary = Summary(
             analyzedAt: ISO8601DateFormatter().string(from: Date()),
-            fileCount: files.count,
+            fileCount: parsedFiles.count,
             totalSmells: smellReport.totalSmells,
             smellsByType: smellReport.smellsByType,
             totalFunctions: metricsReport.totalFunctions,
@@ -945,7 +820,7 @@ class MCPServer {
     }
     
     private func executeAnalyzeFile(path: String) throws -> String {
-        let matches = cache.swiftFileURLs.filter {
+        let matches = cache.fileURLs.filter {
             $0.lastPathComponent == path || $0.path.hasSuffix(path)
         }
         
@@ -1012,27 +887,16 @@ class MCPServer {
     }
     
     private func executeFindSmells(path: String?) throws -> String {
-        let files: [URL]
-        if let path = path {
-            let matches = cache.swiftFileURLs.filter {
-                $0.lastPathComponent == path || $0.path.hasSuffix(path)
-            }
-            guard !matches.isEmpty else {
-                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path)"])
-            }
-            files = matches
-        } else {
-            files = cache.swiftFileURLs
-        }
-        
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = CodeSmellAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
         return encodeToJSON(report)
     }
     
     private func executeFindGodFunctions(minLines: Int, minComplexity: Int) throws -> String {
+        let parsedFiles = cache.parsedFiles
         let analyzer = FunctionMetricsAnalyzer()
-        var report = analyzer.analyze(files: cache.swiftFileURLs, relativeTo: projectRoot)
+        var report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
         
         // Filter by custom thresholds
         report.godFunctions = report.godFunctions.filter {
@@ -1043,44 +907,33 @@ class MCPServer {
     }
     
     private func executeCheckImpact(symbol: String) throws -> String {
+        let parsedFiles = cache.parsedFiles
         let analyzer = ImpactAnalyzer()
-        let report = analyzer.analyze(files: cache.swiftFileURLs, relativeTo: projectRoot, targetSymbol: symbol)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, targetSymbol: symbol)  // Uses cached ASTs
         return encodeToJSON(report)
     }
     
     private func executeSuggestRefactoring(path: String?) throws -> String {
-        let files: [URL]
-        if let path = path {
-            let matches = cache.swiftFileURLs.filter {
-                $0.lastPathComponent == path || $0.path.hasSuffix(path)
-            }
-            guard !matches.isEmpty else {
-                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path)"])
-            }
-            files = matches
-        } else {
-            files = cache.swiftFileURLs
-        }
-        
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = RefactoringAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
         return encodeToJSON(report)
     }
     
     private func executeTrackProperty(pattern: String) throws -> String {
         let analyzer = PropertyAccessAnalyzer()
-        let report = analyzer.analyze(files: cache.swiftFileURLs, relativeTo: projectRoot, targetPattern: pattern)
+        let report = analyzer.analyze(files: cache.fileURLs, relativeTo: projectRoot, targetPattern: pattern)
         return encodeToJSON(report)
     }
     
     private func executeFindCalls(pattern: String) throws -> String {
         let analyzer = MethodCallAnalyzer()
-        let report = analyzer.analyze(files: cache.swiftFileURLs, relativeTo: projectRoot, pattern: pattern)
+        let report = analyzer.analyze(files: cache.fileURLs, relativeTo: projectRoot, pattern: pattern)
         return encodeToJSON(report)
     }
     
     private func executeListFiles(path: String?) throws -> String {
-        var files = cache.swiftFileURLs.map { 
+        var files = cache.fileURLs.map { 
             $0.path.replacingOccurrences(of: projectRoot.path + "/", with: "") 
         }
         
@@ -1097,7 +950,7 @@ class MCPServer {
     }
     
     private func executeReadSource(path: String, startLine: Int?, endLine: Int?) throws -> String {
-        let matches = cache.swiftFileURLs.filter {
+        let matches = cache.fileURLs.filter {
             $0.lastPathComponent == path || $0.path.hasSuffix(path)
         }
         
@@ -1133,7 +986,7 @@ class MCPServer {
     
     private func executeInvalidateCache(path: String?) -> String {
         if let path = path {
-            cache.invalidate(path: path)
+            cache.invalidate(path)
             return "{\"status\": \"invalidated\", \"path\": \"\(path)\"}"
         } else {
             cache.invalidateAll()
@@ -1143,22 +996,23 @@ class MCPServer {
     
     private func executeRescanProject() -> String {
         cache.scan(verbose: verbose)
-        return "{\"status\": \"rescanned\", \"fileCount\": \(cache.swiftFileURLs.count)}"
+        return "{\"status\": \"rescanned\", \"fileCount\": \(cache.fileCount)}"
     }
     
     // MARK: - Additional Tool Implementations
     
+    /// Get ParsedFiles for analyzers that support AST caching
+    private func getParsedFiles(for path: String?) throws -> [ParsedFile] {
+        return cache.getFiles(matching: path)
+    }
+    
+    /// Get file URLs for analyzers that don't yet support AST caching
     private func getFiles(for path: String?) throws -> [URL] {
-        if let path = path {
-            let matches = cache.swiftFileURLs.filter {
-                $0.lastPathComponent == path || $0.path.hasSuffix(path)
-            }
-            guard !matches.isEmpty else {
-                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path)"])
-            }
-            return matches
+        let parsedFiles = cache.getFiles(matching: path)
+        guard !parsedFiles.isEmpty || path == nil else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path!)"])
         }
-        return cache.swiftFileURLs
+        return parsedFiles.map { $0.url }
     }
     
     private func executeFindSingletons(path: String?) throws -> String {
@@ -1302,14 +1156,14 @@ class MCPServer {
     }
     
     private func executeFindRetainCycles(path: String?) throws -> String {
-        let files = try getFiles(for: path)
+        let parsedFiles = try getParsedFiles(for: path)
         let analyzer = RetainCycleAnalyzer()
-        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
         return encodeToJSON(report)
     }
     
     private func executeGetRefactorDetail(file: String, startLine: Int, endLine: Int) throws -> String {
-        let matches = cache.swiftFileURLs.filter {
+        let matches = cache.fileURLs.filter {
             $0.lastPathComponent == file || $0.path.hasSuffix(file)
         }
         
@@ -1427,7 +1281,7 @@ class MCPServer {
     
     private func executeGenerateMigrationChecklist() throws -> String {
         let authAnalyzer = AuthMigrationAnalyzer()
-        let authReport = authAnalyzer.analyze(files: cache.swiftFileURLs, relativeTo: projectRoot)
+        let authReport = authAnalyzer.analyze(files: cache.fileURLs, relativeTo: projectRoot)
         let generator = MigrationChecklistGenerator()
         let checklist = generator.generateAuthMigrationChecklist(from: authReport)
         return encodeToJSON(checklist)

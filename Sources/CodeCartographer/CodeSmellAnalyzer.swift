@@ -228,23 +228,20 @@ final class CodeSmellVisitor: SyntaxVisitor {
 
 // MARK: - Code Smell Analyzer
 
-class CodeSmellAnalyzer {
+class CodeSmellAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> CodeSmellReport {
+    /// Analyze using pre-parsed files (efficient - uses cached ASTs)
+    func analyze(parsedFiles: [ParsedFile]) -> CodeSmellReport {
         var allSmells: [CodeSmell] = []
         var smellsByFile: [String: Int] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = CodeSmellVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = CodeSmellVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)  // Uses cached AST
             
             allSmells.append(contentsOf: visitor.smells)
             if !visitor.smells.isEmpty {
-                smellsByFile[relativePath] = visitor.smells.count
+                smellsByFile[file.relativePath] = visitor.smells.count
             }
         }
         
@@ -267,5 +264,11 @@ class CodeSmellAnalyzer {
             smells: allSmells,
             hotspotFiles: Array(hotspots)
         )
+    }
+    
+    /// Analyze using file URLs (convenience - parses on-the-fly)
+    func analyze(files: [URL], relativeTo root: URL) -> CodeSmellReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }
