@@ -1,4 +1,6 @@
 import Foundation
+import SwiftParser
+import SwiftSyntax
 
 // MARK: - Analysis Context
 
@@ -16,6 +18,9 @@ struct AnalysisContext {
     var parentURL: URL?
     var targetAnalysis: TargetAnalysis?
     var projectPath: String?
+    
+    // Refactor mode options
+    var refactorRemainingOnly: Bool = false  // Only show blocks > 15 lines
 }
 
 // MARK: - Analysis Runners
@@ -504,10 +509,29 @@ func runRetainCyclesAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll:
 func runRefactoringAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool) -> Bool {
     if ctx.verbose {
         fputs("🔧 Running refactoring analysis...\n", stderr)
+        if ctx.refactorRemainingOnly {
+            fputs("   (--remaining: only showing blocks > 15 lines)\n", stderr)
+        }
     }
     
     let refactorAnalyzer = RefactoringAnalyzer()
-    let refactorReport = refactorAnalyzer.analyze(files: ctx.files, relativeTo: ctx.rootURL)
+    var refactorReport = refactorAnalyzer.analyze(files: ctx.files, relativeTo: ctx.rootURL)
+    
+    // Filter to only remaining large blocks if requested
+    if ctx.refactorRemainingOnly {
+        var filteredReport = refactorReport
+        filteredReport.godFunctions = refactorReport.godFunctions.map { gf in
+            var filtered = gf
+            filtered.extractableBlocks = gf.extractableBlocks.filter { $0.lineCount > 15 }
+            return filtered
+        }.filter { !$0.extractableBlocks.isEmpty }
+        filteredReport.extractionOpportunities = refactorReport.extractionOpportunities.map { opp in
+            var filtered = opp
+            filtered.suggestedExtractions = opp.suggestedExtractions.filter { $0.lineCount > 15 }
+            return filtered
+        }.filter { !$0.suggestedExtractions.isEmpty }
+        refactorReport = filteredReport
+    }
     
     if ctx.verbose {
         fputs("   God functions found: \(refactorReport.godFunctions.count)\n", stderr)

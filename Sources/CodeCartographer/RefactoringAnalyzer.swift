@@ -65,6 +65,7 @@ struct ExtractableBlock: Codable {
     var specialDependencies: [String]   // e.g., "typeMap from DependencyGraphAnalyzer"
     var codePreview: String?            // First few lines of the block
     var generatedSignature: String?     // Ready-to-use function signature
+    var blockId: String = ""            // Stable identifier: "file:function#blockName"
     
     enum Difficulty: String, Codable {
         case easy = "easy"      // No shared state, clear boundaries
@@ -119,7 +120,7 @@ struct AnalyzerUsage: Codable {
 struct ExtractionOpportunity: Codable {
     let file: String
     let functionName: String
-    let suggestedExtractions: [ExtractableBlock]
+    var suggestedExtractions: [ExtractableBlock]
     let estimatedComplexityReduction: Int
 }
 
@@ -220,7 +221,9 @@ final class FunctionStructureVisitor: SyntaxVisitor {
             blocks: blocks,
             markSections: markSections,
             startLine: startLine,
-            endLine: endLine
+            endLine: endLine,
+            containerFile: filePath,
+            containerFunction: functionName
         )
         
         godFunctions.append(GodFunctionAnalysis(
@@ -309,7 +312,9 @@ final class FunctionStructureVisitor: SyntaxVisitor {
         blocks: [LogicalBlock],
         markSections: [LogicalBlock],
         startLine: Int,
-        endLine: Int
+        endLine: Int,
+        containerFile: String,
+        containerFunction: String
     ) -> [ExtractableBlock] {
         var suggestions: [ExtractableBlock] = []
         
@@ -344,6 +349,9 @@ final class FunctionStructureVisitor: SyntaxVisitor {
                             // More lines for larger blocks
                             let previewLines = lineCount > 50 ? 10 : (lineCount > 20 ? 5 : 3)
                             
+                            // Create stable blockId: "file:function#suggestedName"
+                            let blockId = "\(containerFile):\(containerFunction)#\(funcName)"
+                            
                             suggestions.append(ExtractableBlock(
                                 suggestedName: funcName,
                                 startLine: modeStart,
@@ -357,7 +365,8 @@ final class FunctionStructureVisitor: SyntaxVisitor {
                                 usedAnalyzers: analyzers,
                                 specialDependencies: deps,
                                 codePreview: blockLines.prefix(previewLines).joined(separator: "\n"),
-                                generatedSignature: ExtractableBlock.generateSignature(name: funcName, params: params, returnType: "Bool")
+                                generatedSignature: ExtractableBlock.generateSignature(name: funcName, params: params, returnType: "Bool"),
+                                blockId: blockId
                             ))
                         }
                         
@@ -383,6 +392,9 @@ final class FunctionStructureVisitor: SyntaxVisitor {
             // More lines for larger blocks
             let previewLines = lineCount > 50 ? 10 : (lineCount > 20 ? 5 : 3)
             
+            // Create stable blockId
+            let blockId = "\(containerFile):\(containerFunction)#\(funcName)"
+            
             suggestions.append(ExtractableBlock(
                 suggestedName: funcName,
                 startLine: modeStart,
@@ -396,7 +408,8 @@ final class FunctionStructureVisitor: SyntaxVisitor {
                 usedAnalyzers: analyzers,
                 specialDependencies: deps,
                 codePreview: blockLines.prefix(previewLines).joined(separator: "\n"),
-                generatedSignature: ExtractableBlock.generateSignature(name: funcName, params: params, returnType: "Bool")
+                generatedSignature: ExtractableBlock.generateSignature(name: funcName, params: params, returnType: "Bool"),
+                blockId: blockId
             ))
         }
         

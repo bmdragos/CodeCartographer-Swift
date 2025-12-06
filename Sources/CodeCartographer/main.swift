@@ -252,9 +252,22 @@ func main() {
     let docsMode = args.contains("--docs")
     let retainCyclesMode = args.contains("--retain-cycles")
     let refactorMode = args.contains("--refactor")
+    let refactorRemaining = args.contains("--remaining")  // Filter to only large unextracted blocks
     let apiMode = args.contains("--api")
     let runAll = args.contains("--all")
     let summaryMode = args.contains("--summary")
+    
+    // Compare baseline for --summary --compare
+    var compareBaseline: String? = nil
+    if let compareIndex = args.firstIndex(of: "--compare"), compareIndex + 1 < args.count {
+        compareBaseline = args[compareIndex + 1]
+    }
+    
+    // Health mode: --health FILE
+    var healthTarget: String? = nil
+    if let healthIndex = args.firstIndex(of: "--health"), healthIndex + 1 < args.count {
+        healthTarget = args[healthIndex + 1]
+    }
     
     // Refactor detail mode: --refactor-detail FILE:START-END
     var refactorDetailTarget: (file: String, start: Int, end: Int)? = nil
@@ -588,7 +601,8 @@ func main() {
     
     // Refactoring analysis
     if refactorMode || runAll {
-        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        var ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        ctx.refactorRemainingOnly = refactorRemaining
         if runRefactoringAnalysis(ctx: ctx, isSpecificMode: refactorMode, runAll: runAll) { return }
     }
     
@@ -669,9 +683,42 @@ func main() {
             let typesReferenced: [String]
             let suggestedSignature: String
             let replacementCall: String
+            let generatedFunction: String  // Ready-to-use extracted function
         }
         
         let funcName = "extractedFunction"  // User can rename
+        
+        // Determine parameters from external variables that look like they're from outer scope
+        let commonParams = ["ctx", "verbose", "rootURL", "rootPath", "swiftFiles", "outputFile", "runAll"]
+        let likelyParams = externalVars.filter { commonParams.contains($0) }.sorted()
+        
+        // Build parameter list
+        let paramList = likelyParams.map { param -> String in
+            switch param {
+            case "ctx": return "ctx: AnalysisContext"
+            case "verbose": return "verbose: Bool"
+            case "rootURL": return "rootURL: URL"
+            case "rootPath": return "rootPath: String"
+            case "swiftFiles": return "swiftFiles: [URL]"
+            case "outputFile": return "outputFile: String?"
+            case "runAll": return "runAll: Bool"
+            default: return "\(param): Any"
+            }
+        }
+        
+        // Detect if block has early return
+        let hasReturn = blockCode.contains("return")
+        let returnType = hasReturn ? " -> Bool" : ""
+        
+        // Generate the actual function code
+        let signature = "func \(funcName)(\(paramList.joined(separator: ", ")))\(returnType)"
+        let indentedCode = blockLines.map { "    \($0)" }.joined(separator: "\n")
+        let generatedFunc = """
+        \(signature) {
+        \(indentedCode)
+        }
+        """
+        
         let detail = ExtractionDetail(
             file: target.file,
             lineRange: "\(target.start)-\(target.end)",
@@ -680,8 +727,9 @@ func main() {
             variablesUsed: Array(externalVars).sorted(),
             functionsCalled: Array(functionCalls).sorted(),
             typesReferenced: Array(typeRefs).sorted(),
-            suggestedSignature: "func \(funcName)() { ... }",
-            replacementCall: "\(funcName)()"
+            suggestedSignature: signature,
+            replacementCall: hasReturn ? "if \(funcName)(\(likelyParams.joined(separator: ", "))) { return }" : "\(funcName)(\(likelyParams.joined(separator: ", ")))",
+            generatedFunction: generatedFunc
         )
         
         if verbose {
@@ -693,6 +741,109 @@ func main() {
         }
         
         outputJSON(detail, to: outputFile)
+        return
+    }
+    
+    // Health mode - unified view of all issues for one file
+    if let targetFile = healthTarget {
+        // Find the file
+        guard let fileURL = swiftFiles.first(where: { $0.lastPathComponent == targetFile || $0.path.hasSuffix(targetFile) }) else {
+            fputs("❌ File not found: \(targetFile)\n", stderr)
+            return
+        }
+        
+        if verbose {
+            fputs("🏥 Running health check for \(targetFile)...\n", stderr)
+        }
+        
+        let singleFile = [fileURL]
+        
+        // Run all relevant analyses on this single file
+        let smellAnalyzer = CodeSmellAnalyzer()
+        let smellReport = smellAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+        
+        let metricsAnalyzer = FunctionMetricsAnalyzer()
+        let metricsReport = metricsAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+        
+        let retainAnalyzer = RetainCycleAnalyzer()
+        let retainReport = retainAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+        
+        let refactorAnalyzer = RefactoringAnalyzer()
+        let refactorReport = refactorAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+        
+        struct FileHealth: Codable {
+            let analyzedAt: String
+            let file: String
+            let lineCount: Int
+            let smells: SmellSummary
+            let functions: FunctionSummary
+            let retainCycleRisk: Int
+            let refactoring: RefactorSummary
+            let overallScore: Int  // 0-100, higher is better
+        }
+        
+        struct SmellSummary: Codable {
+            let total: Int
+            let byType: [String: Int]
+        }
+        
+        struct FunctionSummary: Codable {
+            let total: Int
+            let godFunctions: Int
+            let averageComplexity: Double
+            let maxComplexity: Int
+        }
+        
+        struct RefactorSummary: Codable {
+            let godFunctionsToFix: Int
+            let extractionOpportunities: Int
+        }
+        
+        // Calculate line count
+        let lineCount = (try? String(contentsOf: fileURL))?.components(separatedBy: "\n").count ?? 0
+        
+        // Calculate overall score (100 = perfect, deduct for issues)
+        var score = 100
+        score -= min(30, smellReport.totalSmells * 2)  // Up to -30 for smells
+        score -= min(30, metricsReport.godFunctions.count * 10)  // Up to -30 for god functions
+        score -= min(20, retainReport.riskScore / 5)  // Up to -20 for retain risk
+        score -= min(20, Int(metricsReport.averageComplexity) - 5)  // Deduct if avg complexity > 5
+        score = max(0, score)
+        
+        let maxComplexity = metricsReport.functions.map { $0.complexity }.max() ?? 0
+        
+        let health = FileHealth(
+            analyzedAt: ISO8601DateFormatter().string(from: Date()),
+            file: targetFile,
+            lineCount: lineCount,
+            smells: SmellSummary(
+                total: smellReport.totalSmells,
+                byType: smellReport.smellsByType
+            ),
+            functions: FunctionSummary(
+                total: metricsReport.totalFunctions,
+                godFunctions: metricsReport.godFunctions.count,
+                averageComplexity: metricsReport.averageComplexity,
+                maxComplexity: maxComplexity
+            ),
+            retainCycleRisk: retainReport.riskScore,
+            refactoring: RefactorSummary(
+                godFunctionsToFix: refactorReport.godFunctions.count,
+                extractionOpportunities: refactorReport.extractionOpportunities.count
+            ),
+            overallScore: score
+        )
+        
+        if verbose {
+            fputs("   Lines: \(lineCount)\n", stderr)
+            fputs("   Smells: \(smellReport.totalSmells)\n", stderr)
+            fputs("   Functions: \(metricsReport.totalFunctions)\n", stderr)
+            fputs("   God functions: \(metricsReport.godFunctions.count)\n", stderr)
+            fputs("   Retain risk: \(retainReport.riskScore)/100\n", stderr)
+            fputs("   Overall score: \(score)/100\n", stderr)
+        }
+        
+        outputJSON(health, to: outputFile)
         return
     }
     
@@ -802,6 +953,80 @@ func main() {
             fputs("   Smells: \(smellReport.totalSmells)\n", stderr)
             fputs("   God functions: \(metricsReport.godFunctions.count)\n", stderr)
             fputs("   Retain risk: \(retainReport.riskScore)/100\n", stderr)
+        }
+        
+        // Compare with baseline if provided
+        if let baselinePath = compareBaseline {
+            if let baselineData = try? Data(contentsOf: URL(fileURLWithPath: baselinePath)),
+               let baseline = try? JSONDecoder().decode(ProjectSummary.self, from: baselineData) {
+                
+                struct SummaryDelta: Codable {
+                    let analyzedAt: String
+                    let baselineAt: String
+                    let path: String
+                    let delta: DeltaMetrics
+                    let improved: [String]
+                    let regressed: [String]
+                }
+                
+                struct DeltaMetrics: Codable {
+                    let smells: Int
+                    let godFunctions: Int
+                    let complexity: Double
+                    let files: Int
+                }
+                
+                let smellsDelta = smellReport.totalSmells - baseline.codeHealth.totalSmells
+                let godFuncDelta = metricsReport.godFunctions.count - baseline.codeHealth.godFunctions
+                let complexityDelta = metricsReport.averageComplexity - baseline.codeHealth.averageComplexity
+                let filesDelta = swiftFiles.count - baseline.fileCount
+                
+                var improved: [String] = []
+                var regressed: [String] = []
+                
+                if smellsDelta < 0 { improved.append("Smells: \(baseline.codeHealth.totalSmells) → \(smellReport.totalSmells) (\(smellsDelta))") }
+                else if smellsDelta > 0 { regressed.append("Smells: \(baseline.codeHealth.totalSmells) → \(smellReport.totalSmells) (+\(smellsDelta))") }
+                
+                if godFuncDelta < 0 { improved.append("God functions: \(baseline.codeHealth.godFunctions) → \(metricsReport.godFunctions.count) (\(godFuncDelta))") }
+                else if godFuncDelta > 0 { regressed.append("God functions: \(baseline.codeHealth.godFunctions) → \(metricsReport.godFunctions.count) (+\(godFuncDelta))") }
+                
+                if complexityDelta < -0.1 { improved.append("Avg complexity: \(String(format: "%.1f", baseline.codeHealth.averageComplexity)) → \(String(format: "%.1f", metricsReport.averageComplexity))") }
+                else if complexityDelta > 0.1 { regressed.append("Avg complexity: \(String(format: "%.1f", baseline.codeHealth.averageComplexity)) → \(String(format: "%.1f", metricsReport.averageComplexity))") }
+                
+                let delta = SummaryDelta(
+                    analyzedAt: ISO8601DateFormatter().string(from: Date()),
+                    baselineAt: baseline.analyzedAt,
+                    path: rootPath,
+                    delta: DeltaMetrics(
+                        smells: smellsDelta,
+                        godFunctions: godFuncDelta,
+                        complexity: complexityDelta,
+                        files: filesDelta
+                    ),
+                    improved: improved,
+                    regressed: regressed
+                )
+                
+                if verbose {
+                    fputs("\n📊 Comparison with baseline:\n", stderr)
+                    if !improved.isEmpty {
+                        fputs("   ✅ Improved:\n", stderr)
+                        for item in improved { fputs("      \(item)\n", stderr) }
+                    }
+                    if !regressed.isEmpty {
+                        fputs("   ⚠️ Regressed:\n", stderr)
+                        for item in regressed { fputs("      \(item)\n", stderr) }
+                    }
+                    if improved.isEmpty && regressed.isEmpty {
+                        fputs("   No significant changes\n", stderr)
+                    }
+                }
+                
+                outputJSON(delta, to: outputFile)
+                return
+            } else {
+                fputs("⚠️ Could not read baseline file: \(baselinePath)\n", stderr)
+            }
         }
         
         outputJSON(summary, to: outputFile)
