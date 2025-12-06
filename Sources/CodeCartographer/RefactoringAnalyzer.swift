@@ -64,11 +64,19 @@ struct ExtractableBlock: Codable {
     var usedAnalyzers: [AnalyzerUsage]  // Analyzers called in this block
     var specialDependencies: [String]   // e.g., "typeMap from DependencyGraphAnalyzer"
     var codePreview: String?            // First few lines of the block
+    var generatedSignature: String?     // Ready-to-use function signature
     
     enum Difficulty: String, Codable {
         case easy = "easy"      // No shared state, clear boundaries
         case medium = "medium"  // Some parameters needed
         case hard = "hard"      // Shared mutable state, special dependencies
+    }
+    
+    // Generate a copy-paste ready function signature
+    static func generateSignature(name: String, params: [String], returnType: String?) -> String {
+        let paramsStr = params.isEmpty ? "" : params.joined(separator: ", ")
+        let retStr = returnType.map { " -> \($0)" } ?? ""
+        return "func \(name)(\(paramsStr))\(retStr)"
     }
 }
 
@@ -326,19 +334,30 @@ final class FunctionStructureVisitor: SyntaxVisitor {
                             let blockLines = getBlockLines(from: modeStart, to: blockEnd)
                             let (analyzers, deps, difficulty) = analyzeBlockContent(blockLines)
                             
+                            let funcName = "run\(name.replacingOccurrences(of: "Mode", with: "").capitalized)Analysis"
+                            let params = ["ctx: AnalysisContext", "isSpecificMode: Bool", "runAll: Bool"]
+                            let lineCount = blockEnd - modeStart + 1
+                            
+                            // Skip small blocks (already extracted - typically < 15 lines)
+                            guard lineCount > 15 else { continue }
+                            
+                            // More lines for larger blocks
+                            let previewLines = lineCount > 50 ? 10 : (lineCount > 20 ? 5 : 3)
+                            
                             suggestions.append(ExtractableBlock(
-                                suggestedName: "run\(name.replacingOccurrences(of: "Mode", with: "").capitalized)Analysis",
+                                suggestedName: funcName,
                                 startLine: modeStart,
                                 endLine: blockEnd,
-                                lineCount: blockEnd - modeStart + 1,
+                                lineCount: lineCount,
                                 complexity: 0,
-                                parameters: ["ctx: AnalysisContext", "isSpecificMode: Bool", "runAll: Bool"],
+                                parameters: params,
                                 returns: "Bool",
                                 extractionDifficulty: difficulty,
                                 reason: deps.isEmpty ? "Standard analysis block" : "Has dependencies: \(deps.joined(separator: ", "))",
                                 usedAnalyzers: analyzers,
                                 specialDependencies: deps,
-                                codePreview: blockLines.prefix(3).joined(separator: "\n")
+                                codePreview: blockLines.prefix(previewLines).joined(separator: "\n"),
+                                generatedSignature: ExtractableBlock.generateSignature(name: funcName, params: params, returnType: "Bool")
                             ))
                         }
                         
@@ -354,19 +373,30 @@ final class FunctionStructureVisitor: SyntaxVisitor {
             let blockLines = getBlockLines(from: modeStart, to: endLine)
             let (analyzers, deps, difficulty) = analyzeBlockContent(blockLines)
             
+            let funcName = "run\(name.replacingOccurrences(of: "Mode", with: "").capitalized)Analysis"
+            let params = ["ctx: AnalysisContext", "isSpecificMode: Bool", "runAll: Bool"]
+            let lineCount = endLine - modeStart + 1
+            
+            // Skip small blocks (already extracted - typically < 15 lines)
+            guard lineCount > 15 else { return suggestions }
+            
+            // More lines for larger blocks
+            let previewLines = lineCount > 50 ? 10 : (lineCount > 20 ? 5 : 3)
+            
             suggestions.append(ExtractableBlock(
-                suggestedName: "run\(name.replacingOccurrences(of: "Mode", with: "").capitalized)Analysis",
+                suggestedName: funcName,
                 startLine: modeStart,
                 endLine: endLine,
-                lineCount: endLine - modeStart + 1,
+                lineCount: lineCount,
                 complexity: 0,
-                parameters: ["ctx: AnalysisContext", "isSpecificMode: Bool", "runAll: Bool"],
+                parameters: params,
                 returns: "Bool",
                 extractionDifficulty: difficulty,
                 reason: deps.isEmpty ? "Standard analysis block" : "Has dependencies: \(deps.joined(separator: ", "))",
                 usedAnalyzers: analyzers,
                 specialDependencies: deps,
-                codePreview: blockLines.prefix(3).joined(separator: "\n")
+                codePreview: blockLines.prefix(previewLines).joined(separator: "\n"),
+                generatedSignature: ExtractableBlock.generateSignature(name: funcName, params: params, returnType: "Bool")
             ))
         }
         
