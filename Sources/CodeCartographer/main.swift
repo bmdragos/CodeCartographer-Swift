@@ -622,90 +622,20 @@ func main() {
     
     // Code smells analysis
     if smellsMode || runAll {
-        if verbose {
-            fputs("🦨 Running code smell analysis...\n", stderr)
-        }
-        
-        let smellAnalyzer = CodeSmellAnalyzer()
-        let smellReport = smellAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total smells: \(smellReport.totalSmells)\n", stderr)
-            fputs("\n🔍 Smells by type:\n", stderr)
-            for (type, count) in smellReport.smellsByType.sorted(by: { $0.value > $1.value }) {
-                fputs("     \(type): \(count)\n", stderr)
-            }
-            
-            if !smellReport.hotspotFiles.isEmpty {
-                fputs("\n🔥 Hotspot files:\n", stderr)
-                for file in smellReport.hotspotFiles.prefix(5) {
-                    fputs("     \(file): \(smellReport.smellsByFile[file] ?? 0) smells\n", stderr)
-                }
-            }
-        }
-        
-        if smellsMode && !runAll {
-            outputJSON(smellReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runSmellsAnalysis(ctx: ctx, isSpecificMode: smellsMode, runAll: runAll) { return }
     }
     
     // Localization analysis
     if localizationMode || runAll {
-        if verbose {
-            fputs("🌍 Running localization analysis...\n", stderr)
-        }
-        
-        let locAnalyzer = LocalizationAnalyzer()
-        let locReport = locAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total strings: \(locReport.totalStrings)\n", stderr)
-            fputs("   Localized: \(locReport.localizedStrings)\n", stderr)
-            fputs("   Hardcoded: \(locReport.hardcodedStrings)\n", stderr)
-            fputs("   Coverage: \(String(format: "%.1f", locReport.localizationCoverage))%\n", stderr)
-            
-            if !locReport.localizationPatterns.isEmpty {
-                fputs("\n🔤 Localization patterns used:\n", stderr)
-                for (pattern, count) in locReport.localizationPatterns.sorted(by: { $0.value > $1.value }) {
-                    fputs("     \(pattern): \(count) uses\n", stderr)
-                }
-            }
-        }
-        
-        if localizationMode && !runAll {
-            outputJSON(locReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runLocalizationAnalysis(ctx: ctx, isSpecificMode: localizationMode, runAll: runAll) { return }
     }
     
     // Accessibility analysis
     if accessibilityMode || runAll {
-        if verbose {
-            fputs("♿ Running accessibility analysis...\n", stderr)
-        }
-        
-        let a11yAnalyzer = AccessibilityAnalyzer()
-        let a11yReport = a11yAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   UI elements: \(a11yReport.totalUIElements)\n", stderr)
-            fputs("   With accessibility: \(a11yReport.elementsWithAccessibility)\n", stderr)
-            fputs("   Coverage: \(String(format: "%.1f", a11yReport.accessibilityCoverage))%\n", stderr)
-            fputs("   Issues: \(a11yReport.issues.count)\n", stderr)
-            
-            if !a11yReport.accessibilityUsage.isEmpty {
-                fputs("\n📋 Accessibility APIs used:\n", stderr)
-                for (api, count) in a11yReport.accessibilityUsage.sorted(by: { $0.value > $1.value }).prefix(5) {
-                    fputs("     \(api): \(count) uses\n", stderr)
-                }
-            }
-        }
-        
-        if accessibilityMode && !runAll {
-            outputJSON(a11yReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runAccessibilityAnalysis(ctx: ctx, isSpecificMode: accessibilityMode, runAll: runAll) { return }
     }
     
     // Property access tracking
@@ -795,117 +725,20 @@ func main() {
     
     // Thread safety analysis
     if threadingMode || runAll {
-        if verbose {
-            fputs("🧵 Running thread safety analysis...\n", stderr)
-        }
-        
-        let threadAnalyzer = ThreadSafetyAnalyzer()
-        let threadReport = threadAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total issues: \(threadReport.totalIssues)\n", stderr)
-            
-            if !threadReport.issuesByType.isEmpty {
-                fputs("\n🔍 Issues by type:\n", stderr)
-                for (type, count) in threadReport.issuesByType.sorted(by: { $0.value > $1.value }) {
-                    fputs("     \(type): \(count)\n", stderr)
-                }
-            }
-            
-            fputs("\n⚡ Concurrency patterns:\n", stderr)
-            for (pattern, count) in threadReport.concurrencyPatterns.sorted(by: { $0.value > $1.value }).prefix(10) {
-                fputs("     \(pattern): \(count)\n", stderr)
-            }
-            
-            if !threadReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in threadReport.recommendations {
-                    fputs("     • \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if threadingMode && !runAll {
-            outputJSON(threadReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runThreadingAnalysis(ctx: ctx, isSpecificMode: threadingMode, runAll: runAll) { return }
     }
     
     // SwiftUI analysis
     if swiftuiMode || runAll {
-        if verbose {
-            fputs("🎨 Running SwiftUI analysis...\n", stderr)
-        }
-        
-        let swiftUIAnalyzer = SwiftUIAnalyzer()
-        let swiftUIReport = swiftUIAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   SwiftUI files: \(swiftUIReport.swiftUIFileCount)\n", stderr)
-            fputs("   UIKit files: \(swiftUIReport.uiKitFileCount)\n", stderr)
-            fputs("   Mixed files: \(swiftUIReport.mixedFiles)\n", stderr)
-            fputs("   Views found: \(swiftUIReport.views.count)\n", stderr)
-            
-            fputs("\n📊 State management:\n", stderr)
-            fputs("     @State: \(swiftUIReport.stateManagement.stateCount)\n", stderr)
-            fputs("     @Binding: \(swiftUIReport.stateManagement.bindingCount)\n", stderr)
-            fputs("     @ObservedObject: \(swiftUIReport.stateManagement.observedObjectCount)\n", stderr)
-            fputs("     @StateObject: \(swiftUIReport.stateManagement.stateObjectCount)\n", stderr)
-            fputs("     @EnvironmentObject: \(swiftUIReport.stateManagement.environmentObjectCount)\n", stderr)
-            fputs("     @Published: \(swiftUIReport.stateManagement.publishedCount)\n", stderr)
-            
-            if !swiftUIReport.issues.isEmpty {
-                fputs("\n⚠️ Issues: \(swiftUIReport.issues.count)\n", stderr)
-            }
-        }
-        
-        if swiftuiMode && !runAll {
-            outputJSON(swiftUIReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runSwiftUIAnalysis(ctx: ctx, isSpecificMode: swiftuiMode, runAll: runAll) { return }
     }
     
     // UIKit analysis
     if uikitMode || runAll {
-        if verbose {
-            fputs("📱 Running UIKit analysis...\n", stderr)
-        }
-        
-        let uikitAnalyzer = UIKitAnalyzer()
-        let uikitReport = uikitAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   UIKit files: \(uikitReport.totalUIKitFiles)\n", stderr)
-            fputs("   ViewControllers: \(uikitReport.viewControllers.count)\n", stderr)
-            fputs("   Custom Views: \(uikitReport.views.count)\n", stderr)
-            fputs("   Modernization score: \(uikitReport.modernizationScore)/100\n", stderr)
-            
-            fputs("\n📊 UIKit patterns:\n", stderr)
-            fputs("     IBOutlets: \(uikitReport.patterns.ibOutlets)\n", stderr)
-            fputs("     IBActions: \(uikitReport.patterns.ibActions)\n", stderr)
-            fputs("     Auto Layout: \(uikitReport.patterns.autoLayoutConstraints)\n", stderr)
-            fputs("     SnapKit: \(uikitReport.patterns.snapKitUsage)\n", stderr)
-            fputs("     Frame-based: \(uikitReport.patterns.frameBasedLayout)\n", stderr)
-            fputs("     TableViews: \(uikitReport.patterns.tableViewUsage)\n", stderr)
-            fputs("     CollectionViews: \(uikitReport.patterns.collectionViewUsage)\n", stderr)
-            
-            fputs("\n🧭 Navigation:\n", stderr)
-            fputs("     Storyboard instantiations: \(uikitReport.storyboardUsage.storyboardInstantiations)\n", stderr)
-            fputs("     Segue usage: \(uikitReport.storyboardUsage.segueUsage)\n", stderr)
-            fputs("     Programmatic navigation: \(uikitReport.storyboardUsage.programmaticNavigation)\n", stderr)
-            
-            if !uikitReport.issues.isEmpty {
-                fputs("\n⚠️ Issues: \(uikitReport.issues.count)\n", stderr)
-                for issue in uikitReport.issues.prefix(5) {
-                    fputs("     \(issue.file): \(issue.description)\n", stderr)
-                }
-            }
-        }
-        
-        if uikitMode && !runAll {
-            outputJSON(uikitReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runUIKitAnalysis(ctx: ctx, isSpecificMode: uikitMode, runAll: runAll) { return }
     }
     
     // Test coverage analysis
@@ -1041,199 +874,32 @@ func main() {
     
     // Core Data analysis
     if coredataMode || runAll {
-        if verbose {
-            fputs("💾 Running Core Data analysis...\n", stderr)
-        }
-        
-        let coreDataAnalyzer = CoreDataAnalyzer()
-        let coreDataReport = coreDataAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Has Core Data: \(coreDataReport.hasCoreData ? "Yes" : "No")\n", stderr)
-            fputs("   Entities: \(coreDataReport.entities.count)\n", stderr)
-            fputs("   Fetch requests: \(coreDataReport.patterns.fetchRequestCount)\n", stderr)
-            
-            if coreDataReport.hasCoreData {
-                fputs("\n📊 Core Data patterns:\n", stderr)
-                fputs("     Main context usage: \(coreDataReport.patterns.mainContextUsage)\n", stderr)
-                fputs("     Background context usage: \(coreDataReport.patterns.backgroundContextUsage)\n", stderr)
-                fputs("     Batch operations: \(coreDataReport.patterns.batchInsertCount + coreDataReport.patterns.batchDeleteCount)\n", stderr)
-                fputs("     NSFetchedResultsController: \(coreDataReport.patterns.nsfetchedResultsControllerCount)\n", stderr)
-                
-                if !coreDataReport.issues.isEmpty {
-                    fputs("\n⚠️ Issues: \(coreDataReport.issues.count)\n", stderr)
-                }
-            }
-        }
-        
-        if coredataMode && !runAll {
-            outputJSON(coreDataReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runCoreDataAnalysis(ctx: ctx, isSpecificMode: coredataMode, runAll: runAll) { return }
     }
     
     // Documentation coverage analysis
     if docsMode || runAll {
-        if verbose {
-            fputs("📝 Running documentation analysis...\n", stderr)
-        }
-        
-        let docsAnalyzer = DocumentationAnalyzer()
-        let docsReport = docsAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Public symbols: \(docsReport.totalPublicSymbols)\n", stderr)
-            fputs("   Documented: \(docsReport.documentedSymbols)\n", stderr)
-            fputs("   Coverage: \(String(format: "%.1f", docsReport.coveragePercentage))%\n", stderr)
-            
-            fputs("\n📊 By type:\n", stderr)
-            fputs("     Classes: \(docsReport.byType.classes.documented)/\(docsReport.byType.classes.total)\n", stderr)
-            fputs("     Structs: \(docsReport.byType.structs.documented)/\(docsReport.byType.structs.total)\n", stderr)
-            fputs("     Protocols: \(docsReport.byType.protocols.documented)/\(docsReport.byType.protocols.total)\n", stderr)
-            fputs("     Functions: \(docsReport.byType.functions.documented)/\(docsReport.byType.functions.total)\n", stderr)
-            
-            if !docsReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in docsReport.recommendations {
-                    fputs("     • \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if docsMode && !runAll {
-            outputJSON(docsReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runDocsAnalysis(ctx: ctx, isSpecificMode: docsMode, runAll: runAll) { return }
     }
     
     // Retain cycle analysis
     if retainCyclesMode || runAll {
-        if verbose {
-            fputs("🔄 Running retain cycle analysis...\n", stderr)
-        }
-        
-        let retainAnalyzer = RetainCycleAnalyzer()
-        let retainReport = retainAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Risk score: \(retainReport.riskScore)/100\n", stderr)
-            fputs("   Potential cycles: \(retainReport.potentialCycles.count)\n", stderr)
-            fputs("   Delegate issues: \(retainReport.delegateIssues.count)\n", stderr)
-            
-            fputs("\n📊 Closure patterns:\n", stderr)
-            fputs("     Closures with self: \(retainReport.patterns.closuresWithSelf)\n", stderr)
-            fputs("     With [weak self]: \(retainReport.patterns.closuresWithWeakSelf)\n", stderr)
-            fputs("     With [unowned self]: \(retainReport.patterns.closuresWithUnownedSelf)\n", stderr)
-            fputs("     Strong delegates: \(retainReport.patterns.strongDelegates)\n", stderr)
-            
-            fputs("\n⏱️ Timer/Notification balance:\n", stderr)
-            fputs("     Timers created: \(retainReport.patterns.timersCreated)\n", stderr)
-            fputs("     Timers invalidated: \(retainReport.patterns.timersInvalidated)\n", stderr)
-            fputs("     Notifications added: \(retainReport.patterns.notificationsAdded)\n", stderr)
-            fputs("     Notifications removed: \(retainReport.patterns.notificationsRemoved)\n", stderr)
-            
-            if !retainReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in retainReport.recommendations {
-                    fputs("     • \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if retainCyclesMode && !runAll {
-            outputJSON(retainReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runRetainCyclesAnalysis(ctx: ctx, isSpecificMode: retainCyclesMode, runAll: runAll) { return }
     }
     
-    // Refactoring analysis - god functions and extraction suggestions
+    // Refactoring analysis
     if refactorMode || runAll {
-        if verbose {
-            fputs("🔧 Running refactoring analysis...\n", stderr)
-        }
-        
-        let refactorAnalyzer = RefactoringAnalyzer()
-        let refactorReport = refactorAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   God functions found: \(refactorReport.godFunctions.count)\n", stderr)
-            fputs("   Extraction opportunities: \(refactorReport.extractionOpportunities.count)\n", stderr)
-            fputs("   Estimated complexity reduction: \(refactorReport.totalComplexityReduction)\n", stderr)
-            
-            if !refactorReport.godFunctions.isEmpty {
-                fputs("\n🔥 God functions (by impact):\n", stderr)
-                for godFunc in refactorReport.godFunctions.prefix(10) {
-                    fputs("     \(godFunc.file):\(godFunc.name) - \(godFunc.lineCount) lines, complexity \(godFunc.complexity)\n", stderr)
-                    for extraction in godFunc.extractableBlocks.prefix(3) {
-                        fputs("       → Extract: \(extraction.suggestedName)() [lines \(extraction.startLine)-\(extraction.endLine)]\n", stderr)
-                    }
-                }
-            }
-            
-            if !refactorReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in refactorReport.recommendations {
-                    fputs("     \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if refactorMode && !runAll {
-            outputJSON(refactorReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runRefactoringAnalysis(ctx: ctx, isSpecificMode: refactorMode, runAll: runAll) { return }
     }
     
-    // API surface analysis - full type signatures
+    // API surface analysis
     if apiMode || runAll {
-        if verbose {
-            fputs("📋 Running API surface analysis...\n", stderr)
-        }
-        
-        let apiAnalyzer = APIAnalyzer()
-        let apiReport = apiAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Types: \(apiReport.types.count)\n", stderr)
-            fputs("   Global functions: \(apiReport.globalFunctions.count)\n", stderr)
-            fputs("   Public APIs: \(apiReport.totalPublicAPIs)\n", stderr)
-            
-            // Show analyzers specifically (useful for refactoring)
-            let analyzers = apiReport.types.filter { $0.name.hasSuffix("Analyzer") }
-            if !analyzers.isEmpty {
-                fputs("\n🔧 Analyzer APIs:\n", stderr)
-                for analyzer in analyzers.prefix(10) {
-                    fputs("   \(analyzer.name):\n", stderr)
-                    for method in analyzer.methods.filter({ $0.name == "analyze" }) {
-                        let params = method.parameters.map { "\($0.name): \($0.type)" }.joined(separator: ", ")
-                        let ret = method.returnType ?? "Void"
-                        fputs("     func \(method.name)(\(params)) -> \(ret)\n", stderr)
-                    }
-                }
-            }
-            
-            // Show Report types (useful for understanding output)
-            let reports = apiReport.types.filter { $0.name.hasSuffix("Report") }
-            if !reports.isEmpty {
-                fputs("\n📊 Report types (\(reports.count)):\n", stderr)
-                for report in reports.prefix(10) {
-                    let props = report.properties.map { $0.name }.prefix(5).joined(separator: ", ")
-                    fputs("   \(report.name): \(props)...\n", stderr)
-                }
-            }
-            
-            if !apiReport.recommendations.isEmpty {
-                fputs("\n💡 Recommendations:\n", stderr)
-                for rec in apiReport.recommendations {
-                    fputs("     • \(rec)\n", stderr)
-                }
-            }
-        }
-        
-        if apiMode && !runAll {
-            outputJSON(apiReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runAPIAnalysis(ctx: ctx, isSpecificMode: apiMode, runAll: runAll) { return }
     }
     
     // Singleton/global state analysis (explicit mode required now)
