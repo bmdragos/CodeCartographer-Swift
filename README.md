@@ -1,5 +1,9 @@
 # CodeCartographer
 
+<p align="center">
+  <img src="codecartlogo.JPG" alt="CodeCartographer Logo" width="400">
+</p>
+
 **Swift Static Analyzer for AI-Assisted Refactoring**
 
 CodeCartographer is a powerful CLI tool that analyzes Swift codebases and outputs structured JSON reports. It's designed to provide rich context for AI coding assistants, enabling more informed refactoring decisions.
