@@ -238,7 +238,9 @@ func runNetworkAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool
         if !networkReport.endpoints.isEmpty {
             fputs("\n🔗 Endpoints:\n", stderr)
             for endpoint in networkReport.endpoints.prefix(10) {
-                fputs("     \(endpoint.method) \(endpoint.endpoint)\n", stderr)
+                let method = endpoint.method ?? "?"
+                let path = endpoint.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+                fputs("     [\(method)] \(path)\n", stderr)
             }
         }
     }

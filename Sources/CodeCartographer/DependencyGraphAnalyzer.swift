@@ -165,8 +165,19 @@ final class TypeDefinitionVisitor: SyntaxVisitor {
     
     private func extractConformances(from clause: InheritanceClauseSyntax?) -> [String] {
         guard let clause = clause else { return [] }
-        return clause.inheritedTypes.map { 
-            $0.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Raw value types to exclude (not protocols)
+        let rawValueTypes: Set<String> = ["String", "Int", "Int8", "Int16", "Int32", "Int64",
+                                          "UInt", "UInt8", "UInt16", "UInt32", "UInt64",
+                                          "Double", "Float", "Character", "Bool"]
+        
+        return clause.inheritedTypes.compactMap { inherited -> String? in
+            let name = inherited.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Filter out raw value types (used by enums)
+            if rawValueTypes.contains(name) {
+                return nil
+            }
+            return name
         }
     }
     

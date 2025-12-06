@@ -75,13 +75,18 @@ final class DelegateWiringVisitor: SyntaxVisitor {
     
     // Detect delegate property declarations
     override func visit(_ node: VariableDeclSyntax) -> SyntaxVisitorContinueKind {
-        let declText = node.description.lowercased()
+        let isWeak = node.modifiers.contains { $0.name.text == "weak" }
         
-        if declText.contains("delegate") || declText.contains("datasource") {
-            let isWeak = node.modifiers.contains { $0.name.text == "weak" }
-            
-            for binding in node.bindings {
-                if let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text {
+        for binding in node.bindings {
+            if let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text {
+                let lowerName = name.lowercased()
+                // Check if property NAME is a delegate (not just contains "delegate" anywhere)
+                let isDelegateProperty = lowerName == "delegate" || 
+                                         lowerName == "datasource" ||
+                                         lowerName.hasSuffix("delegate") ||
+                                         lowerName.hasSuffix("datasource")
+                
+                if isDelegateProperty {
                     delegateProperties.append((name, isWeak))
                 }
             }
@@ -98,8 +103,14 @@ final class DelegateWiringVisitor: SyntaxVisitor {
             let leftSide = node.leftOperand.description.trimmingCharacters(in: .whitespacesAndNewlines)
             let rightSide = node.rightOperand.description.trimmingCharacters(in: .whitespacesAndNewlines)
             
-            // Check if assigning to a delegate property
-            if leftSide.lowercased().contains("delegate") || leftSide.lowercased().contains("datasource") {
+            // Check if assigning to a delegate property (ends with .delegate or .dataSource)
+            let leftLower = leftSide.lowercased()
+            let isDelegateAssignment = leftLower.hasSuffix(".delegate") || 
+                                       leftLower.hasSuffix(".datasource") ||
+                                       leftLower.hasSuffix("delegate") ||
+                                       leftLower.hasSuffix("datasource")
+            
+            if isDelegateAssignment {
                 wirings.append(DelegateWiring(
                     file: filePath,
                     line: lineNumber(for: node.position),
