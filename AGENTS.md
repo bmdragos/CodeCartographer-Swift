@@ -108,6 +108,9 @@ Shows:
 | Find global state | `--singletons` | Before decoupling |
 | Memory issues | `--retain-cycles` | Debugging memory leaks |
 | Test coverage | `--tests` | Before adding tests |
+| Track property access | `--property "Class.*"` | Find all usages of a class |
+| Find method calls | `--calls "*.methodName"` | Find SDK/library calls to migrate |
+| Impact of changes | `--impact "Symbol"` | Blast radius before refactoring |
 
 ## JSON Output Patterns
 

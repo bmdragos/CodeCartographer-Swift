@@ -76,6 +76,7 @@ let analysisModes: [(flag: String, name: String, description: String)] = [
     ("--api", "API Surface", "Full type signatures, methods, properties"),
     ("--summary", "Summary", "Compact AI-friendly overview of code health"),
     ("--property TARGET", "Property Access", "Track all accesses to a specific pattern"),
+    ("--calls PATTERN", "Method Calls", "Find method calls matching pattern (e.g., *.forgotPassword, pool.*)"),
     ("--impact SYMBOL", "Impact Analysis", "Analyze blast radius of changing a symbol"),
     ("--checklist", "Migration Checklist", "Generate phased migration plan from auth analysis"),
     ("--all", "All", "Run all analyses (verbose only, no JSON)"),
@@ -308,6 +309,12 @@ func main() {
     var impactTarget: String? = nil
     if let impactIndex = args.firstIndex(of: "--impact"), impactIndex + 1 < args.count {
         impactTarget = args[impactIndex + 1]
+    }
+    
+    // Method call pattern
+    var callsPattern: String? = nil
+    if let callsIndex = args.firstIndex(of: "--calls"), callsIndex + 1 < args.count {
+        callsPattern = args[callsIndex + 1]
     }
     
     var outputFile: String? = nil
@@ -553,6 +560,37 @@ func main() {
         }
         
         outputJSON(propReport, to: outputFile)
+        return
+    }
+    
+    // Method call tracking
+    if let pattern = callsPattern {
+        if verbose {
+            fputs("📞 Finding method calls matching: \(pattern)\n", stderr)
+        }
+        
+        let callAnalyzer = MethodCallAnalyzer()
+        let callReport = callAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL, pattern: pattern)
+        
+        if verbose {
+            fputs("   Total calls: \(callReport.totalCalls)\n", stderr)
+            fputs("   Files: \(callReport.files.count)\n", stderr)
+            
+            if !callReport.callsByMethod.isEmpty {
+                fputs("\n📊 Calls by method:\n", stderr)
+                for (method, count) in callReport.callsByMethod.sorted(by: { $0.value > $1.value }).prefix(10) {
+                    fputs("     \(method): \(count) calls\n", stderr)
+                }
+            }
+            
+            fputs("\n📁 Files:\n", stderr)
+            for file in callReport.files.prefix(15) {
+                let count = callReport.callsByFile[file]?.count ?? 0
+                fputs("     \(file): \(count) calls\n", stderr)
+            }
+        }
+        
+        outputJSON(callReport, to: outputFile)
         return
     }
     
