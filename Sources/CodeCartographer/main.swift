@@ -128,10 +128,11 @@ let analysisModes: [(flag: String, name: String, description: String)] = [
     ("--retain-cycles", "Retain Cycles", "Potential memory leaks and retain cycles"),
     ("--refactor", "Refactoring", "God functions with extraction suggestions"),
     ("--api", "API Surface", "Full type signatures, methods, properties"),
+    ("--summary", "Summary", "Compact AI-friendly overview of code health"),
     ("--property TARGET", "Property Access", "Track all accesses to a specific pattern"),
     ("--impact SYMBOL", "Impact Analysis", "Analyze blast radius of changing a symbol"),
     ("--checklist", "Migration Checklist", "Generate phased migration plan from auth analysis"),
-    ("--all", "All", "Run all analyses and combine output"),
+    ("--all", "All", "Run all analyses (verbose only, no JSON)"),
 ]
 
 func printHelp() {
@@ -307,6 +308,7 @@ func main() {
     let refactorMode = args.contains("--refactor")
     let apiMode = args.contains("--api")
     let runAll = args.contains("--all")
+    let summaryMode = args.contains("--summary")
     
     // Property tracking target
     var propertyTarget: String? = nil
@@ -756,6 +758,118 @@ func main() {
     }
     
     // Singleton/global state analysis (explicit mode required now)
+    // Summary mode - compact AI-friendly overview
+    if summaryMode {
+        if verbose {
+            fputs("📊 Generating summary report...\n", stderr)
+        }
+        
+        // Run key analyses and collect metrics
+        let smellAnalyzer = CodeSmellAnalyzer()
+        let smellReport = smellAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
+        
+        let metricsAnalyzer = FunctionMetricsAnalyzer()
+        let metricsReport = metricsAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
+        
+        let refactorAnalyzer = RefactoringAnalyzer()
+        let refactorReport = refactorAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
+        
+        let retainAnalyzer = RetainCycleAnalyzer()
+        let retainReport = retainAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
+        
+        let unusedAnalyzer = UnusedCodeAnalyzer()
+        let unusedReport = unusedAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL, targetFiles: nil)
+        
+        // Build compact summary
+        struct ProjectSummary: Codable {
+            let analyzedAt: String
+            let path: String
+            let fileCount: Int
+            let codeHealth: CodeHealth
+            let refactoring: RefactoringNeeds
+            let topIssues: [String]
+        }
+        
+        struct CodeHealth: Codable {
+            let totalSmells: Int
+            let totalFunctions: Int
+            let godFunctions: Int
+            let averageComplexity: Double
+            let retainCycleRisk: Int
+            let unusedTypes: Int
+            let unusedFunctions: Int
+        }
+        
+        struct RefactoringNeeds: Codable {
+            let godFunctionsToFix: [GodFunctionSummary]
+            let extractionOpportunities: Int
+            let estimatedComplexityReduction: Int
+        }
+        
+        struct GodFunctionSummary: Codable {
+            let name: String
+            let file: String
+            let lines: Int
+            let complexity: Int
+            let suggestedExtractions: Int
+        }
+        
+        let godFunctionSummaries = refactorReport.godFunctions.prefix(5).map { gf in
+            GodFunctionSummary(
+                name: gf.name,
+                file: gf.file,
+                lines: gf.lineCount,
+                complexity: gf.complexity,
+                suggestedExtractions: gf.extractableBlocks.count
+            )
+        }
+        
+        var topIssues: [String] = []
+        if metricsReport.godFunctions.count > 0 {
+            topIssues.append("\(metricsReport.godFunctions.count) god functions need refactoring")
+        }
+        if smellReport.totalSmells > 50 {
+            topIssues.append("\(smellReport.totalSmells) code smells detected")
+        }
+        if retainReport.riskScore > 50 {
+            topIssues.append("High retain cycle risk: \(retainReport.riskScore)/100")
+        }
+        if unusedReport.potentiallyUnusedTypes.count > 5 {
+            topIssues.append("\(unusedReport.potentiallyUnusedTypes.count) potentially unused types")
+        }
+        
+        let summary = ProjectSummary(
+            analyzedAt: ISO8601DateFormatter().string(from: Date()),
+            path: rootPath,
+            fileCount: swiftFiles.count,
+            codeHealth: CodeHealth(
+                totalSmells: smellReport.totalSmells,
+                totalFunctions: metricsReport.totalFunctions,
+                godFunctions: metricsReport.godFunctions.count,
+                averageComplexity: metricsReport.averageComplexity,
+                retainCycleRisk: retainReport.riskScore,
+                unusedTypes: unusedReport.potentiallyUnusedTypes.count,
+                unusedFunctions: unusedReport.potentiallyUnusedFunctions.count
+            ),
+            refactoring: RefactoringNeeds(
+                godFunctionsToFix: Array(godFunctionSummaries),
+                extractionOpportunities: refactorReport.extractionOpportunities.count,
+                estimatedComplexityReduction: refactorReport.totalComplexityReduction
+            ),
+            topIssues: topIssues
+        )
+        
+        if verbose {
+            fputs("   Files: \(swiftFiles.count)\n", stderr)
+            fputs("   Smells: \(smellReport.totalSmells)\n", stderr)
+            fputs("   God functions: \(metricsReport.godFunctions.count)\n", stderr)
+            fputs("   Retain risk: \(retainReport.riskScore)/100\n", stderr)
+        }
+        
+        outputJSON(summary, to: outputFile)
+        return
+    }
+    
     if singletonsMode || runAll {
         var nodes: [FileNode] = []
         
