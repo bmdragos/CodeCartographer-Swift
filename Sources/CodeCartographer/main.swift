@@ -208,6 +208,13 @@ func main() {
         return
     }
     
+    // Show version
+    if args.contains("--version") || args.contains("-v") {
+        print("CodeCartographer v1.0.0")
+        print("Swift Static Analyzer for AI-Assisted Refactoring")
+        return
+    }
+    
     // Check if first arg is a path (not a flag)
     let firstArg = args[1]
     if firstArg.hasPrefix("-") {
