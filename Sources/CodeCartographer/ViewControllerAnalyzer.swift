@@ -210,21 +210,17 @@ final class ViewControllerVisitor: SyntaxVisitor {
 
 // MARK: - VC Analyzer
 
-class ViewControllerAnalyzer {
+class ViewControllerAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> ViewControllerReport {
+    func analyze(parsedFiles: [ParsedFile]) -> ViewControllerReport {
         var allVCs: [ViewControllerInfo] = []
         var allIssues: [ViewControllerIssue] = []
         var allHeavyMethods: [HeavyLifecycleMethod] = []
         var lifecycleOverrides: [String: Int] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = ViewControllerVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = ViewControllerVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allVCs.append(contentsOf: visitor.viewControllers)
             allIssues.append(contentsOf: visitor.issues)
@@ -247,5 +243,10 @@ class ViewControllerAnalyzer {
             issues: allIssues,
             heavyLifecycleMethods: allHeavyMethods.sorted { $0.lineCount > $1.lineCount }
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> ViewControllerReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

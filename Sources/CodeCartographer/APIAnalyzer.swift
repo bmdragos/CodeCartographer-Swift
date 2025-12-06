@@ -368,19 +368,15 @@ final class APIVisitor: SyntaxVisitor {
 
 // MARK: - API Analyzer
 
-class APIAnalyzer {
+class APIAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> APIReport {
+    func analyze(parsedFiles: [ParsedFile]) -> APIReport {
         var allTypes: [TypeAPI] = []
         var allGlobalFunctions: [FunctionSignature] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = APIVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = APIVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allTypes.append(contentsOf: visitor.types)
             allGlobalFunctions.append(contentsOf: visitor.globalFunctions)
@@ -421,6 +417,11 @@ class APIAnalyzer {
             totalPublicAPIs: totalPublic,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> APIReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
     
     /// Get a concise summary suitable for refactoring context

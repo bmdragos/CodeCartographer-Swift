@@ -145,21 +145,17 @@ final class LocalizationVisitor: SyntaxVisitor {
 
 // MARK: - Localization Analyzer
 
-class LocalizationAnalyzer {
+class LocalizationAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> LocalizationReport {
+    func analyze(parsedFiles: [ParsedFile]) -> LocalizationReport {
         var allHardcoded: [HardcodedString] = []
         var totalLocalized = 0
         var hardcodedByFile: [String: Int] = [:]
         var allPatterns: [String: Int] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = LocalizationVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = LocalizationVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             // Only count user-facing hardcoded strings
             let userFacing = visitor.hardcodedStrings.filter { $0.likelyUserFacing }
@@ -167,7 +163,7 @@ class LocalizationAnalyzer {
             totalLocalized += visitor.localizedCount
             
             if !userFacing.isEmpty {
-                hardcodedByFile[relativePath] = userFacing.count
+                hardcodedByFile[file.relativePath] = userFacing.count
             }
             
             for pattern in visitor.localizationPatterns {
@@ -190,5 +186,10 @@ class LocalizationAnalyzer {
             hardcodedStrings_list: allHardcoded,
             localizationPatterns: allPatterns
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> LocalizationReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

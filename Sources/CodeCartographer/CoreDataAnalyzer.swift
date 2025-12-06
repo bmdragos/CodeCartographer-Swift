@@ -282,9 +282,9 @@ final class CoreDataVisitor: SyntaxVisitor {
 
 // MARK: - Core Data Analyzer
 
-class CoreDataAnalyzer {
+class CoreDataAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> CoreDataReport {
+    func analyze(parsedFiles: [ParsedFile]) -> CoreDataReport {
         var allEntities: [CoreDataEntityInfo] = []
         var allFetchRequests: [FetchRequestInfo] = []
         var allContexts: [ManagedObjectContextInfo] = []
@@ -297,13 +297,9 @@ class CoreDataAnalyzer {
         var allIssues: [CoreDataIssue] = []
         var hasCoreData = false
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = CoreDataVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = CoreDataVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             if visitor.hasCoreData {
                 hasCoreData = true
@@ -355,5 +351,10 @@ class CoreDataAnalyzer {
             issues: allIssues,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> CoreDataReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

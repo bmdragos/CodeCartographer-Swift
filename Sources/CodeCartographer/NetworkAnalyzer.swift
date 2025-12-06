@@ -148,32 +148,28 @@ final class NetworkVisitor: SyntaxVisitor {
 
 // MARK: - Network Analyzer
 
-class NetworkAnalyzer {
+class NetworkAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> NetworkCallReport {
+    func analyze(parsedFiles: [ParsedFile]) -> NetworkCallReport {
         var allEndpoints: [EndpointUsage] = []
         var patternCounts: [String: (Int, Set<String>)] = [:]  // pattern -> (count, files)
         var fileNetworkUsage: [String: Int] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = NetworkVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = NetworkVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allEndpoints.append(contentsOf: visitor.endpoints)
             
             if !visitor.endpoints.isEmpty || !visitor.networkPatterns.isEmpty {
-                fileNetworkUsage[relativePath] = visitor.endpoints.count + visitor.networkPatterns.count
+                fileNetworkUsage[file.relativePath] = visitor.endpoints.count + visitor.networkPatterns.count
             }
             
             for pattern in visitor.networkPatterns {
-                var (count, files) = patternCounts[pattern] ?? (0, Set<String>())
+                var (count, fileSet) = patternCounts[pattern] ?? (0, Set<String>())
                 count += 1
-                files.insert(relativePath)
-                patternCounts[pattern] = (count, files)
+                fileSet.insert(file.relativePath)
+                patternCounts[pattern] = (count, fileSet)
             }
         }
         
@@ -206,6 +202,11 @@ class NetworkAnalyzer {
             networkPatterns: patterns,
             filesByNetworkUsage: fileNetworkUsage
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> NetworkCallReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
     
     private func describePattern(_ pattern: String) -> String {

@@ -227,9 +227,9 @@ final class ReactiveVisitor: SyntaxVisitor {
 
 // MARK: - Reactive Analyzer
 
-class ReactiveAnalyzer {
+class ReactiveAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> ReactiveReport {
+    func analyze(parsedFiles: [ParsedFile]) -> ReactiveReport {
         var allSubscriptions: [SubscriptionInfo] = []
         var allLeaks: [PotentialLeak] = []
         var totalDisposeBags = 0
@@ -238,13 +238,9 @@ class ReactiveAnalyzer {
         var usesRxSwift = false
         var usesCombine = false
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = ReactiveVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = ReactiveVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             if visitor.usesRxSwift { usesRxSwift = true }
             if visitor.usesCombine { usesCombine = true }
@@ -255,7 +251,7 @@ class ReactiveAnalyzer {
             totalCancellables += visitor.cancellableCount
             
             if !visitor.subscriptions.isEmpty || visitor.disposeBagCount > 0 {
-                fileStats[relativePath] = ReactiveFileStats(
+                fileStats[file.relativePath] = ReactiveFileStats(
                     subscriptionCount: visitor.subscriptions.count,
                     disposeBagCount: visitor.disposeBagCount,
                     hasStrongSelfWarnings: visitor.potentialLeaks.filter { $0.issue == .strongSelfInClosure }.count
@@ -286,5 +282,10 @@ class ReactiveAnalyzer {
             potentialLeaks: allLeaks,
             reactiveFileStats: fileStats
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> ReactiveReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

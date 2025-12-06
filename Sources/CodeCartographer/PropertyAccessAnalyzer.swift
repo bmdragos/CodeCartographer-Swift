@@ -178,21 +178,17 @@ final class PropertyAccessVisitor: SyntaxVisitor {
 
 class PropertyAccessAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL, targetPattern: String) -> PropertyAccessReport {
+    func analyze(parsedFiles: [ParsedFile], targetPattern: String) -> PropertyAccessReport {
         var allAccesses: [String: [PropertyAccess]] = [:]
         var accessesByFile: [String: [PropertyAccess]] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
+        for file in parsedFiles {
             let visitor = PropertyAccessVisitor(
-                filePath: relativePath,
-                sourceText: sourceText,
+                filePath: file.relativePath,
+                sourceText: file.sourceText,
                 targetPattern: targetPattern
             )
-            visitor.walk(tree)
+            visitor.walk(file.ast)
             
             // Merge accesses
             for (prop, propAccesses) in visitor.accesses {
@@ -202,7 +198,7 @@ class PropertyAccessAnalyzer {
             // Track by file
             let fileAccesses = visitor.accesses.values.flatMap { $0 }
             if !fileAccesses.isEmpty {
-                accessesByFile[relativePath] = fileAccesses
+                accessesByFile[file.relativePath] = fileAccesses
             }
         }
         
@@ -233,5 +229,10 @@ class PropertyAccessAnalyzer {
             properties: properties.sorted { $0.readCount + $0.writeCount + $0.callCount > $1.readCount + $1.writeCount + $1.callCount },
             accessesByFile: accessesByFile
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL, targetPattern: String) -> PropertyAccessReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles, targetPattern: targetPattern)
     }
 }

@@ -216,17 +216,12 @@ final class TypeDefinitionVisitor: SyntaxVisitor {
 
 class DependencyGraphAnalyzer {
     
-    func analyzeTypes(files: [URL], relativeTo root: URL) -> TypeMap {
+    func analyzeTypes(parsedFiles: [ParsedFile]) -> TypeMap {
         var allDefinitions: [TypeDefinition] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            
-            let tree = Parser.parse(source: sourceText)
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let visitor = TypeDefinitionVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = TypeDefinitionVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allDefinitions.append(contentsOf: visitor.definitions)
         }
@@ -269,6 +264,11 @@ class DependencyGraphAnalyzer {
             protocolConformances: protocolConformances,
             inheritanceChains: inheritanceChains
         )
+    }
+    
+    func analyzeTypes(files: [URL], relativeTo root: URL) -> TypeMap {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyzeTypes(parsedFiles: parsedFiles)
     }
     
     private func buildInheritanceChain(for className: String, chains: [String: [String]], visited: Set<String> = []) -> [String] {

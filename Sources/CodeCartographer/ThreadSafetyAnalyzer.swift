@@ -228,19 +228,15 @@ final class ThreadSafetyVisitor: SyntaxVisitor {
 
 // MARK: - Thread Safety Analyzer
 
-class ThreadSafetyAnalyzer {
+class ThreadSafetyAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> ThreadSafetyReport {
+    func analyze(parsedFiles: [ParsedFile]) -> ThreadSafetyReport {
         var allIssues: [ThreadSafetyIssue] = []
         var allPatterns: [String: Int] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = ThreadSafetyVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = ThreadSafetyVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allIssues.append(contentsOf: visitor.issues)
             for (pattern, count) in visitor.patterns {
@@ -277,5 +273,10 @@ class ThreadSafetyAnalyzer {
             concurrencyPatterns: allPatterns,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> ThreadSafetyReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

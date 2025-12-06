@@ -225,19 +225,14 @@ final class AuthMigrationVisitor: SyntaxVisitor {
 
 // MARK: - Report Builder
 
-class AuthMigrationAnalyzer {
+class AuthMigrationAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> AuthMigrationReport {
+    func analyze(parsedFiles: [ParsedFile]) -> AuthMigrationReport {
         var allAccesses: [AuthAccess] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            
-            let tree = Parser.parse(source: sourceText)
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let visitor = AuthMigrationVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = AuthMigrationVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allAccesses.append(contentsOf: visitor.accesses)
         }
@@ -301,5 +296,10 @@ class AuthMigrationAnalyzer {
         }
         
         return items
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> AuthMigrationReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

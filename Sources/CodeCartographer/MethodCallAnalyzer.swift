@@ -141,17 +141,12 @@ final class MethodCallVisitor: SyntaxVisitor {
 
 class MethodCallAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL, pattern: String) -> MethodCallReport {
+    func analyze(parsedFiles: [ParsedFile], pattern: String) -> MethodCallReport {
         var allCalls: [MethodCall] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            
-            let tree = Parser.parse(source: sourceText)
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let visitor = MethodCallVisitor(filePath: relativePath, sourceText: sourceText, pattern: pattern)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = MethodCallVisitor(filePath: file.relativePath, sourceText: file.sourceText, pattern: pattern)
+            visitor.walk(file.ast)
             
             allCalls.append(contentsOf: visitor.calls)
         }
@@ -175,5 +170,10 @@ class MethodCallAnalyzer {
             callsByMethod: callsByMethod.sorted { $0.value > $1.value }.reduce(into: [:]) { $0[$1.key] = $1.value },
             files: files
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL, pattern: String) -> MethodCallReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles, pattern: pattern)
     }
 }

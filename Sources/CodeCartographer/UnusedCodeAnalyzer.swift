@@ -124,7 +124,7 @@ final class SymbolUsageVisitor: SyntaxVisitor {
 
 class UnusedCodeAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL, targetFiles: Set<String>?) -> UnusedCodeReport {
+    func analyze(parsedFiles: [ParsedFile], targetFiles: Set<String>?) -> UnusedCodeReport {
         var allDefinedTypes: [(String, String, String, Int?)] = []  // (name, kind, file, line)
         var allDefinedFunctions: [(String, String, String, Int?)] = []  // (name, visibility, file, line)
         var allReferencedSymbols: Set<String> = []
@@ -132,24 +132,20 @@ class UnusedCodeAnalyzer {
         var moduleUsage: [String: Int] = [:]
         
         // First pass: collect all definitions and references
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = SymbolUsageVisitor(filePath: relativePath)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = SymbolUsageVisitor(filePath: file.relativePath)
+            visitor.walk(file.ast)
             
             for (name, kind, line) in visitor.definedTypes {
-                allDefinedTypes.append((name, kind, relativePath, line))
+                allDefinedTypes.append((name, kind, file.relativePath, line))
             }
             
             for (name, vis, line) in visitor.definedFunctions {
-                allDefinedFunctions.append((name, vis, relativePath, line))
+                allDefinedFunctions.append((name, vis, file.relativePath, line))
             }
             
             allReferencedSymbols.formUnion(visitor.referencedSymbols)
-            fileImports[relativePath] = visitor.imports
+            fileImports[file.relativePath] = visitor.imports
             
             // Track module usage
             for imp in visitor.imports {
@@ -221,5 +217,10 @@ class UnusedCodeAnalyzer {
                 estimatedDeadLines: unusedTypes.count * 50 + unusedFunctions.count * 10  // rough estimate
             )
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL, targetFiles: Set<String>?) -> UnusedCodeReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles, targetFiles: targetFiles)
     }
 }

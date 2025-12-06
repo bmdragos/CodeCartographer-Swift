@@ -156,7 +156,7 @@ final class TestVisitor: SyntaxVisitor {
 class TestCoverageAnalyzer {
     
     /// Analyze test coverage with optional target information
-    func analyze(files: [URL], relativeTo root: URL, targetAnalysis: TargetAnalysis? = nil) -> TestCoverageReport {
+    func analyze(parsedFiles: [ParsedFile], targetAnalysis: TargetAnalysis? = nil) -> TestCoverageReport {
         var testFiles: [TestFileInfo] = []
         var productionFiles: Set<String> = []
         var testedFiles: Set<String> = []
@@ -174,7 +174,7 @@ class TestCoverageAnalyzer {
                 
                 if isTestTarget {
                     // Count tests in this target
-                    var targetTestCount = 0
+                    let targetTestCount = 0
                     for file in target.files {
                         fileToTarget[file] = target.name
                         testTargetFiles.insert(file)
@@ -195,22 +195,19 @@ class TestCoverageAnalyzer {
             }
         }
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            let fileName = fileURL.lastPathComponent
+        for file in parsedFiles {
+            let fileName = file.url.lastPathComponent
             
             // Skip test files for production count
-            let isInTestDir = relativePath.contains("Tests/") || relativePath.contains("Test/")
+            let isInTestDir = file.relativePath.contains("Tests/") || file.relativePath.contains("Test/")
             // Check if file is a test file (ends with Tests.swift, Test.swift, Spec.swift)
             // Don't match files like "TestCoverageAnalyzer.swift" which analyze tests
             let baseName = fileName.replacingOccurrences(of: ".swift", with: "")
             let hasTestSuffix = baseName.hasSuffix("Tests") || baseName.hasSuffix("Test") || 
                                 baseName.hasSuffix("Spec") || baseName.hasSuffix("Specs")
             
-            let tree = Parser.parse(source: sourceText)
-            let visitor = TestVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+            let visitor = TestVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             if visitor.isTestFile || isInTestDir || hasTestSuffix {
                 // This is a test file
@@ -221,7 +218,7 @@ class TestCoverageAnalyzer {
                 let isActive = targetName != nil || testTargetFiles.contains(fileName)
                 
                 testFiles.append(TestFileInfo(
-                    testFile: relativePath,
+                    testFile: file.relativePath,
                     productionFile: inferredProductionFile,
                     testCount: visitor.testNames.count,
                     testNames: visitor.testNames,
@@ -302,6 +299,11 @@ class TestCoverageAnalyzer {
             testPatterns: allPatterns,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL, targetAnalysis: TargetAnalysis? = nil) -> TestCoverageReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles, targetAnalysis: targetAnalysis)
     }
     
     private func inferProductionFile(from testFileName: String) -> String? {

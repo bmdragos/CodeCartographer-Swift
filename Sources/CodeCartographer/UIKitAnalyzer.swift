@@ -327,9 +327,9 @@ final class UIKitVisitor: SyntaxVisitor {
 
 // MARK: - UIKit Analyzer
 
-class UIKitAnalyzer {
+class UIKitAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> UIKitReport {
+    func analyze(parsedFiles: [ParsedFile]) -> UIKitReport {
         var allVCs: [UIKitViewControllerInfo] = []
         var allViews: [UIKitViewInfo] = []
         var totalPatterns = UIKitPatterns(
@@ -348,13 +348,9 @@ class UIKitAnalyzer {
         var allIssues: [UIKitIssue] = []
         var uikitFileCount = 0
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = UIKitVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = UIKitVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             if visitor.hasUIKit {
                 uikitFileCount += 1
@@ -426,5 +422,10 @@ class UIKitAnalyzer {
             issues: allIssues,
             modernizationScore: score
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> UIKitReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

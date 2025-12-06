@@ -178,20 +178,16 @@ final class AccessibilityVisitor: SyntaxVisitor {
 
 class AccessibilityAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> AccessibilityReport {
+    func analyze(parsedFiles: [ParsedFile]) -> AccessibilityReport {
         var allIssues: [AccessibilityIssue] = []
         var totalUIElements = 0
         var totalAccessibilitySet = 0
         var allUsage: [String: Int] = [:]
         var fileStats: [String: AccessibilityFileStats] = [:]
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = AccessibilityVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = AccessibilityVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allIssues.append(contentsOf: visitor.issues)
             totalUIElements += visitor.uiElementCount
@@ -205,7 +201,7 @@ class AccessibilityAnalyzer {
                 let coverage = visitor.uiElementCount > 0 ?
                     Double(visitor.accessibilitySetCount) / Double(visitor.uiElementCount) * 100 : 0
                 
-                fileStats[relativePath] = AccessibilityFileStats(
+                fileStats[file.relativePath] = AccessibilityFileStats(
                     uiElementCount: visitor.uiElementCount,
                     accessibilitySetCount: visitor.accessibilitySetCount,
                     coverage: coverage
@@ -227,5 +223,10 @@ class AccessibilityAnalyzer {
             accessibilityUsage: allUsage,
             fileStats: fileStats
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> AccessibilityReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

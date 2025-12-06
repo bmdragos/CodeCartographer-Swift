@@ -143,29 +143,25 @@ final class DelegateWiringVisitor: SyntaxVisitor {
 
 class DelegateAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL, typeMap: TypeMap) -> DelegateWiringReport {
+    func analyze(parsedFiles: [ParsedFile], typeMap: TypeMap) -> DelegateWiringReport {
         var allWirings: [DelegateWiring] = []
         var wiringsByFile: [String: [DelegateWiring]] = [:]
         var issues: [DelegateIssue] = []
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = DelegateWiringVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = DelegateWiringVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allWirings.append(contentsOf: visitor.wirings)
             if !visitor.wirings.isEmpty {
-                wiringsByFile[relativePath] = visitor.wirings
+                wiringsByFile[file.relativePath] = visitor.wirings
             }
             
             // Check for non-weak delegate properties
             for (propName, isWeak) in visitor.delegateProperties {
                 if !isWeak {
                     issues.append(DelegateIssue(
-                        file: relativePath,
+                        file: file.relativePath,
                         line: nil,
                         issue: .strongDelegateReference,
                         description: "Property '\(propName)' should be weak to avoid retain cycles"
@@ -177,7 +173,7 @@ class DelegateAnalyzer {
             for wiring in visitor.wirings {
                 if wiring.context == "init" {
                     issues.append(DelegateIssue(
-                        file: relativePath,
+                        file: file.relativePath,
                         line: wiring.line,
                         issue: .delegateSetInInit,
                         description: "Delegate '\(wiring.delegateProperty)' set in init - may cause issues if delegate isn't ready"
@@ -211,5 +207,10 @@ class DelegateAnalyzer {
             wiringsByFile: wiringsByFile,
             potentialIssues: issues
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL, typeMap: TypeMap) -> DelegateWiringReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles, typeMap: typeMap)
     }
 }

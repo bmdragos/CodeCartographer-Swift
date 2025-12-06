@@ -337,9 +337,9 @@ final class DocumentationVisitor: SyntaxVisitor {
 
 // MARK: - Documentation Analyzer
 
-class DocumentationAnalyzer {
+class DocumentationAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> DocumentationReport {
+    func analyze(parsedFiles: [ParsedFile]) -> DocumentationReport {
         var allUndocumented: [UndocumentedItem] = []
         var allDocumented: [DocumentedItem] = []
         var totalStats = DocumentationByType(
@@ -351,13 +351,9 @@ class DocumentationAnalyzer {
             properties: DocumentationStats(total: 0, documented: 0, percentage: 0)
         )
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = DocumentationVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = DocumentationVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             allUndocumented.append(contentsOf: visitor.undocumented)
             allDocumented.append(contentsOf: visitor.documented)
@@ -419,5 +415,10 @@ class DocumentationAnalyzer {
             byType: totalStats,
             recommendations: recommendations
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> DocumentationReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }

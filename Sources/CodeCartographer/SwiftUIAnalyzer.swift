@@ -225,9 +225,9 @@ final class SwiftUIVisitor: SyntaxVisitor {
 
 // MARK: - SwiftUI Analyzer
 
-class SwiftUIAnalyzer {
+class SwiftUIAnalyzer: CachingAnalyzer {
     
-    func analyze(files: [URL], relativeTo root: URL) -> SwiftUIReport {
+    func analyze(parsedFiles: [ParsedFile]) -> SwiftUIReport {
         var allViews: [SwiftUIViewInfo] = []
         var allPatterns: [String: Int] = [:]
         var allIssues: [SwiftUIIssue] = []
@@ -241,13 +241,9 @@ class SwiftUIAnalyzer {
         var uiKitFiles = 0
         var mixedFiles = 0
         
-        for fileURL in files {
-            guard let sourceText = try? String(contentsOf: fileURL) else { continue }
-            let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            
-            let tree = Parser.parse(source: sourceText)
-            let visitor = SwiftUIVisitor(filePath: relativePath, sourceText: sourceText)
-            visitor.walk(tree)
+        for file in parsedFiles {
+            let visitor = SwiftUIVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            visitor.walk(file.ast)
             
             // Count file types
             if visitor.hasSwiftUI && visitor.hasUIKit {
@@ -289,5 +285,10 @@ class SwiftUIAnalyzer {
             patterns: allPatterns,
             issues: allIssues
         )
+    }
+    
+    func analyze(files: [URL], relativeTo root: URL) -> SwiftUIReport {
+        let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
+        return analyze(parsedFiles: parsedFiles)
     }
 }
