@@ -352,114 +352,26 @@ func main() {
     
     // Auth migration analysis
     if authMigration || runAll {
-        if verbose {
-            fputs("🔐 Running auth migration analysis...\n", stderr)
-        }
-        
-        let authAnalyzer = AuthMigrationAnalyzer()
-        let authReport = authAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total auth accesses: \(authReport.totalAccesses)\n", stderr)
-            fputs("   Properties tracked: \(authReport.accessesByProperty.count)\n", stderr)
-            fputs("\n🔑 Top auth properties:\n", stderr)
-            for item in authReport.migrationPriority.prefix(10) {
-                fputs("   \(item.totalAccesses)x \(item.property) (\(item.fileCount) files)\n", stderr)
-            }
-        }
-        
-        if authMigration && !runAll {
-            outputJSON(authReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runAuthMigrationAnalysis(ctx: ctx, isSpecificMode: authMigration, runAll: runAll) { return }
     }
     
     // Types analysis
     if typesOnly || runAll {
-        if verbose {
-            fputs("📐 Running type definition analysis...\n", stderr)
-        }
-        
-        let depAnalyzer = DependencyGraphAnalyzer()
-        let typeMap = depAnalyzer.analyzeTypes(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Types defined: \(typeMap.definitions.count)\n", stderr)
-            fputs("   Protocols: \(typeMap.definitions.filter { $0.kind == .protocol }.count)\n", stderr)
-            fputs("   Classes: \(typeMap.definitions.filter { $0.kind == .class }.count)\n", stderr)
-            fputs("   Structs: \(typeMap.definitions.filter { $0.kind == .struct }.count)\n", stderr)
-            
-            // Show most-implemented protocols
-            let topProtocols = typeMap.protocolConformances.sorted { $0.value.count > $1.value.count }.prefix(5)
-            if !topProtocols.isEmpty {
-                fputs("\n📋 Most implemented protocols:\n", stderr)
-                for (proto, conformers) in topProtocols {
-                    fputs("   \(proto): \(conformers.count) conformers\n", stderr)
-                }
-            }
-        }
-        
-        if typesOnly && !runAll {
-            outputJSON(typeMap, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runTypesAnalysis(ctx: ctx, isSpecificMode: typesOnly, runAll: runAll) { return }
     }
     
     // Tech debt analysis
     if techDebt || runAll {
-        if verbose {
-            fputs("📝 Running tech debt analysis...\n", stderr)
-        }
-        
-        let debtAnalyzer = TechDebtAnalyzer()
-        let debtReport = debtAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total markers: \(debtReport.totalMarkers)\n", stderr)
-            fputs("   By type:\n", stderr)
-            for (type, count) in debtReport.markersByType.sorted(by: { $0.value > $1.value }) {
-                fputs("     \(type): \(count)\n", stderr)
-            }
-            if !debtReport.hotspotFiles.isEmpty {
-                fputs("   Hotspot files:\n", stderr)
-                for file in debtReport.hotspotFiles.prefix(5) {
-                    fputs("     \(file): \(debtReport.markersByFile[file] ?? 0) markers\n", stderr)
-                }
-            }
-        }
-        
-        if techDebt && !runAll {
-            outputJSON(debtReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runTechDebtAnalysis(ctx: ctx, isSpecificMode: techDebt, runAll: runAll) { return }
     }
     
     // Function metrics analysis
     if functionsMode || runAll {
-        if verbose {
-            fputs("📏 Running function metrics analysis...\n", stderr)
-        }
-        
-        let metricsAnalyzer = FunctionMetricsAnalyzer()
-        let metricsReport = metricsAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total functions: \(metricsReport.totalFunctions)\n", stderr)
-            fputs("   Average line count: \(String(format: "%.1f", metricsReport.averageLineCount))\n", stderr)
-            fputs("   Average complexity: \(String(format: "%.1f", metricsReport.averageComplexity))\n", stderr)
-            fputs("   God functions (>50 lines or complexity >10): \(metricsReport.godFunctions.count)\n", stderr)
-            if !metricsReport.godFunctions.isEmpty {
-                fputs("\n⚠️ Top god functions:\n", stderr)
-                for fn in metricsReport.godFunctions.prefix(10) {
-                    fputs("     \(fn.name) in \(fn.file): \(fn.lineCount) lines, complexity \(fn.complexity)\n", stderr)
-                }
-            }
-        }
-        
-        if functionsMode && !runAll {
-            outputJSON(metricsReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runFunctionsAnalysis(ctx: ctx, isSpecificMode: functionsMode, runAll: runAll) { return }
     }
     
     // Delegate wiring analysis
@@ -530,94 +442,20 @@ func main() {
     
     // Network analysis
     if networkMode || runAll {
-        if verbose {
-            fputs("🌐 Running network call analysis...\n", stderr)
-        }
-        
-        let networkAnalyzer = NetworkAnalyzer()
-        let networkReport = networkAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total endpoints found: \(networkReport.totalEndpoints)\n", stderr)
-            fputs("   Files with network code: \(networkReport.totalNetworkFiles)\n", stderr)
-            
-            if !networkReport.networkPatterns.isEmpty {
-                fputs("\n🔌 Network patterns:\n", stderr)
-                for pattern in networkReport.networkPatterns.prefix(5) {
-                    fputs("     \(pattern.pattern): \(pattern.count) uses - \(pattern.description)\n", stderr)
-                }
-            }
-            
-            if !networkReport.endpoints.isEmpty {
-                fputs("\n📡 Sample endpoints:\n", stderr)
-                for endpoint in networkReport.endpoints.prefix(10) {
-                    let method = endpoint.method ?? "?"
-                    fputs("     [\(method)] \(endpoint.endpoint)\n", stderr)
-                }
-            }
-        }
-        
-        if networkMode && !runAll {
-            outputJSON(networkReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runNetworkAnalysis(ctx: ctx, isSpecificMode: networkMode, runAll: runAll) { return }
     }
     
     // Reactive (RxSwift/Combine) analysis
     if reactiveMode || runAll {
-        if verbose {
-            fputs("⚡ Running reactive analysis...\n", stderr)
-        }
-        
-        let reactiveAnalyzer = ReactiveAnalyzer()
-        let reactiveReport = reactiveAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Framework: \(reactiveReport.framework)\n", stderr)
-            fputs("   Total subscriptions: \(reactiveReport.totalSubscriptions)\n", stderr)
-            fputs("   DisposeBags: \(reactiveReport.totalDisposeBags)\n", stderr)
-            fputs("   Potential leaks: \(reactiveReport.potentialLeaks.count)\n", stderr)
-            
-            if !reactiveReport.potentialLeaks.isEmpty {
-                fputs("\n⚠️ Potential memory leaks:\n", stderr)
-                for leak in reactiveReport.potentialLeaks.prefix(10) {
-                    fputs("     \(leak.file):\(leak.line ?? 0) - \(leak.description)\n", stderr)
-                }
-            }
-        }
-        
-        if reactiveMode && !runAll {
-            outputJSON(reactiveReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runReactiveAnalysis(ctx: ctx, isSpecificMode: reactiveMode, runAll: runAll) { return }
     }
     
     // ViewController lifecycle analysis
     if vcMode || runAll {
-        if verbose {
-            fputs("📱 Running ViewController analysis...\n", stderr)
-        }
-        
-        let vcAnalyzer = ViewControllerAnalyzer()
-        let vcReport = vcAnalyzer.analyze(files: swiftFiles, relativeTo: rootURL)
-        
-        if verbose {
-            fputs("   Total ViewControllers: \(vcReport.totalViewControllers)\n", stderr)
-            fputs("   Lifecycle issues: \(vcReport.issues.count)\n", stderr)
-            fputs("   Heavy lifecycle methods: \(vcReport.heavyLifecycleMethods.count)\n", stderr)
-            
-            if !vcReport.lifecycleOverrides.isEmpty {
-                fputs("\n📋 Lifecycle overrides:\n", stderr)
-                for (method, count) in vcReport.lifecycleOverrides.sorted(by: { $0.value > $1.value }).prefix(5) {
-                    fputs("     \(method): \(count) VCs\n", stderr)
-                }
-            }
-        }
-        
-        if vcMode && !runAll {
-            outputJSON(vcReport, to: outputFile)
-            return
-        }
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        if runViewControllersAnalysis(ctx: ctx, isSpecificMode: vcMode, runAll: runAll) { return }
     }
     
     // Code smells analysis

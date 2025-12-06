@@ -123,6 +123,36 @@ func runAuthMigrationAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll
     return false
 }
 
+func runTypesAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool) -> Bool {
+    if ctx.verbose {
+        fputs("📐 Running type definition analysis...\n", stderr)
+    }
+    
+    let depAnalyzer = DependencyGraphAnalyzer()
+    let typeMap = depAnalyzer.analyzeTypes(files: ctx.files, relativeTo: ctx.rootURL)
+    
+    if ctx.verbose {
+        fputs("   Types defined: \(typeMap.definitions.count)\n", stderr)
+        fputs("   Protocols: \(typeMap.definitions.filter { $0.kind == .protocol }.count)\n", stderr)
+        fputs("   Classes: \(typeMap.definitions.filter { $0.kind == .class }.count)\n", stderr)
+        fputs("   Structs: \(typeMap.definitions.filter { $0.kind == .struct }.count)\n", stderr)
+        
+        let topProtocols = typeMap.protocolConformances.sorted { $0.value.count > $1.value.count }.prefix(5)
+        if !topProtocols.isEmpty {
+            fputs("\n📋 Most implemented protocols:\n", stderr)
+            for (proto, conformers) in topProtocols {
+                fputs("   \(proto): \(conformers.count) conformers\n", stderr)
+            }
+        }
+    }
+    
+    if isSpecificMode && !runAll {
+        outputJSON(typeMap, to: ctx.outputFile)
+        return true
+    }
+    return false
+}
+
 func runNetworkAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: Bool) -> Bool {
     if ctx.verbose {
         fputs("🌐 Running network analysis...\n", stderr)
