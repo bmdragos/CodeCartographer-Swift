@@ -615,10 +615,27 @@ func main() {
             fputs("📦 Running dependency analysis...\n", stderr)
         }
         
-        // Analyze from parent directory (where Podfile typically lives)
-        let parentURL = rootURL.deletingLastPathComponent()
+        // Find the project root by searching upward for dependency files
+        func findProjectRoot(from start: URL) -> URL {
+            var current = start
+            let fm = FileManager.default
+            for _ in 0..<5 {  // Search up to 5 levels
+                if fm.fileExists(atPath: current.appendingPathComponent("Package.swift").path) ||
+                   fm.fileExists(atPath: current.appendingPathComponent("Podfile").path) ||
+                   fm.fileExists(atPath: current.appendingPathComponent("Cartfile").path) ||
+                   fm.fileExists(atPath: current.appendingPathComponent(".xcodeproj").path) {
+                    return current
+                }
+                let parent = current.deletingLastPathComponent()
+                if parent == current { break }
+                current = parent
+            }
+            return start  // Fallback to original
+        }
+        
+        let projectRoot = findProjectRoot(from: rootURL)
         let depAnalyzer = DependencyManagerAnalyzer()
-        let depReport = depAnalyzer.analyze(projectRoot: parentURL)
+        let depReport = depAnalyzer.analyze(projectRoot: projectRoot)
         
         if verbose {
             fputs("   Podfile: \(depReport.hasPodfile ? "✓" : "✗")\n", stderr)

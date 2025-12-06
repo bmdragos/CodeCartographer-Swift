@@ -202,7 +202,11 @@ class TestCoverageAnalyzer {
             
             // Skip test files for production count
             let isInTestDir = relativePath.contains("Tests/") || relativePath.contains("Test/")
-            let hasTestSuffix = fileName.contains("Test") || fileName.contains("Spec")
+            // Check if file is a test file (ends with Tests.swift, Test.swift, Spec.swift)
+            // Don't match files like "TestCoverageAnalyzer.swift" which analyze tests
+            let baseName = fileName.replacingOccurrences(of: ".swift", with: "")
+            let hasTestSuffix = baseName.hasSuffix("Tests") || baseName.hasSuffix("Test") || 
+                                baseName.hasSuffix("Spec") || baseName.hasSuffix("Specs")
             
             let tree = Parser.parse(source: sourceText)
             let visitor = TestVisitor(filePath: relativePath, sourceText: sourceText)
