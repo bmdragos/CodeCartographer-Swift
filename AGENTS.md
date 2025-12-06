@@ -4,8 +4,9 @@ This guide helps AI coding assistants effectively use CodeCartographer to unders
 
 ## MCP Server (Preferred for AI Agents)
 
-If CodeCartographer is configured as an MCP server, you have direct access to these tools:
+If CodeCartographer is configured as an MCP server, you have direct access to **34 tools**:
 
+### Core Workflow Tools
 | Tool | Use When |
 |------|----------|
 | `get_summary` | Starting analysis - get project health overview |
@@ -14,9 +15,54 @@ If CodeCartographer is configured as an MCP server, you have direct access to th
 | `find_god_functions` | Finding functions that need refactoring |
 | `check_impact` | Before modifying a symbol - see blast radius |
 | `suggest_refactoring` | Getting extraction suggestions |
+| `get_refactor_detail` | Get copy-paste ready extracted function |
 | `track_property` | Finding all uses of a property (migration planning) |
 | `find_calls` | Finding method call patterns |
 | `read_source` | Reading specific code sections |
+
+### Architecture Analysis
+| Tool | Use When |
+|------|----------|
+| `find_types` | Understanding type hierarchy and protocols |
+| `find_delegates` | Analyzing delegate patterns |
+| `find_singletons` | Finding global state usage |
+| `analyze_api_surface` | Getting public API signatures |
+
+### Code Quality Tools
+| Tool | Use When |
+|------|----------|
+| `find_retain_cycles` | Checking for memory leaks |
+| `find_unused_code` | Finding dead code |
+| `find_tech_debt` | Finding TODO/FIXME markers |
+| `find_threading_issues` | Checking thread safety |
+
+### Framework-Specific
+| Tool | Use When |
+|------|----------|
+| `analyze_swiftui` | Analyzing SwiftUI state management |
+| `analyze_uikit` | Getting UIKit modernization score |
+| `find_viewcontrollers` | Auditing VC lifecycle |
+| `analyze_coredata` | Checking Core Data usage |
+| `find_reactive` | Finding RxSwift/Combine issues |
+| `find_network_calls` | Mapping API endpoints |
+
+### Migration & Quality Audits
+| Tool | Use When |
+|------|----------|
+| `analyze_auth_migration` | Planning auth migration |
+| `generate_migration_checklist` | Getting phased migration plan |
+| `analyze_dependencies` | Understanding CocoaPods/SPM deps |
+| `find_localization_issues` | Checking i18n coverage |
+| `find_accessibility_issues` | Auditing accessibility |
+| `analyze_docs` | Checking documentation coverage |
+| `analyze_tests` | Analyzing test coverage |
+
+### Utilities
+| Tool | Use When |
+|------|----------|
+| `list_files` | Listing Swift files |
+| `invalidate_cache` | Forcing re-analysis after changes |
+| `rescan_project` | Detecting new/deleted files |
 
 **Workflow with MCP:**
 1. Call `get_summary` to understand project health
@@ -24,6 +70,7 @@ If CodeCartographer is configured as an MCP server, you have direct access to th
 3. Call `suggest_refactoring` with specific file path
 4. Call `read_source` to see the actual code
 5. Call `check_impact` before making changes
+6. Call `get_refactor_detail` to get copy-paste extraction code
 
 ## CLI Quick Reference
 

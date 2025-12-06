@@ -248,20 +248,71 @@ Add to your MCP settings:
 }
 ```
 
-### Available Tools
+### Available Tools (34 total)
 
+**Project Analysis**
 | Tool | Description |
 |------|-------------|
 | `get_summary` | Quick project health overview |
 | `analyze_file` | Single file health check |
-| `find_smells` | Code smell analysis |
-| `find_god_functions` | Large/complex functions |
-| `check_impact` | Blast radius for symbol changes |
-| `suggest_refactoring` | Extraction opportunities |
-| `track_property` | Find property accesses |
-| `find_calls` | Find method calls |
 | `list_files` | List Swift files |
 | `read_source` | Read file contents |
+
+**Code Quality**
+| Tool | Description |
+|------|-------------|
+| `find_smells` | Force unwraps, magic numbers, deep nesting |
+| `find_god_functions` | Large/complex functions |
+| `find_retain_cycles` | Memory leak risks |
+| `find_unused_code` | Dead code detection |
+| `find_tech_debt` | TODO/FIXME/HACK markers |
+
+**Refactoring**
+| Tool | Description |
+|------|-------------|
+| `suggest_refactoring` | Extraction opportunities |
+| `get_refactor_detail` | Detailed extraction info for code block |
+| `check_impact` | Blast radius for symbol changes |
+
+**Architecture**
+| Tool | Description |
+|------|-------------|
+| `find_types` | Types, protocols, inheritance |
+| `find_delegates` | Delegate wiring patterns |
+| `find_singletons` | Global state patterns |
+| `analyze_api_surface` | Public API signatures |
+
+**Framework-Specific**
+| Tool | Description |
+|------|-------------|
+| `analyze_swiftui` | SwiftUI patterns and state |
+| `analyze_uikit` | UIKit patterns and modernization |
+| `find_viewcontrollers` | ViewController lifecycle |
+| `analyze_coredata` | Core Data usage |
+| `find_reactive` | RxSwift/Combine subscriptions |
+
+**Migration & Dependencies**
+| Tool | Description |
+|------|-------------|
+| `track_property` | Find property accesses |
+| `find_calls` | Find method calls |
+| `analyze_auth_migration` | Auth code tracking |
+| `generate_migration_checklist` | Phased migration plan |
+| `analyze_dependencies` | CocoaPods/SPM/Carthage |
+
+**Quality Audits**
+| Tool | Description |
+|------|-------------|
+| `find_localization_issues` | i18n coverage |
+| `find_accessibility_issues` | Accessibility audit |
+| `find_threading_issues` | Thread safety |
+| `analyze_docs` | Documentation coverage |
+| `analyze_tests` | Test coverage |
+| `find_network_calls` | API endpoints |
+
+**Utilities**
+| Tool | Description |
+|------|-------------|
 | `invalidate_cache` | Clear cached results |
 | `rescan_project` | Rescan for file changes |
 

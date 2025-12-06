@@ -807,8 +807,8 @@ func runSingletonsAnalysis(ctx: AnalysisContext, isSpecificMode: Bool, runAll: B
     return false
 }
 
-// Helper functions for singleton analysis
-private func analyzeSingletonFile(at url: URL, relativeTo root: URL) -> FileNode? {
+// Helper functions for singleton analysis (internal for MCP server access)
+func analyzeSingletonFile(at url: URL, relativeTo root: URL) -> FileNode? {
     guard let sourceText = try? String(contentsOf: url) else {
         fputs("⚠️ Failed to read \(url.path)\n", stderr)
         return nil
@@ -827,7 +827,7 @@ private func analyzeSingletonFile(at url: URL, relativeTo root: URL) -> FileNode
     )
 }
 
-private func buildSingletonSummary(from files: [FileNode]) -> AnalysisSummary {
+func buildSingletonSummary(from files: [FileNode]) -> AnalysisSummary {
     var singletonUsage: [String: Int] = [:]
     var fileRefCounts: [(String, Int)] = []
     

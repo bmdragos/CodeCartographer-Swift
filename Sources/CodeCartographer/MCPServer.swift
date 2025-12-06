@@ -528,6 +528,196 @@ class MCPServer {
                 name: "rescan_project",
                 description: "Rescan project for new/deleted files",
                 inputSchema: MCPInputSchema()
+            ),
+            // Additional analysis tools
+            MCPTool(
+                name: "find_singletons",
+                description: "Find global state and singleton usage patterns (e.g., .shared, .default)",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_types",
+                description: "Analyze type definitions, protocols, and inheritance hierarchy",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_tech_debt",
+                description: "Find TODO, FIXME, HACK comment markers in the codebase",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_delegates",
+                description: "Analyze delegate wiring patterns and potential issues",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_unused_code",
+                description: "Find potentially dead code (unused types and functions)",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_network_calls",
+                description: "Find API endpoints and network call patterns",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_reactive",
+                description: "Analyze RxSwift/Combine subscriptions and potential memory leaks",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_viewcontrollers",
+                description: "Audit ViewController lifecycle patterns and issues",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_localization_issues",
+                description: "Find hardcoded strings and measure i18n coverage",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_accessibility_issues",
+                description: "Audit accessibility API coverage and find missing accessibility support",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_threading_issues",
+                description: "Find thread safety issues and concurrency patterns",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "analyze_swiftui",
+                description: "Analyze SwiftUI patterns and state management (@State, @Binding, etc.)",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "analyze_uikit",
+                description: "Analyze UIKit patterns and get modernization score",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "analyze_tests",
+                description: "Analyze test coverage with target awareness",
+                inputSchema: MCPInputSchema()
+            ),
+            MCPTool(
+                name: "analyze_dependencies",
+                description: "Analyze CocoaPods, SPM, and Carthage dependencies",
+                inputSchema: MCPInputSchema()
+            ),
+            MCPTool(
+                name: "analyze_coredata",
+                description: "Analyze Core Data entities, fetch requests, and context usage",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "analyze_docs",
+                description: "Audit documentation coverage for public APIs",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "find_retain_cycles",
+                description: "Find potential memory leaks and retain cycle risks",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "get_refactor_detail",
+                description: "Get detailed extraction info for a specific code block",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "file": MCPProperty(type: "string", description: "File name or path"),
+                        "startLine": MCPProperty(type: "integer", description: "Start line number"),
+                        "endLine": MCPProperty(type: "integer", description: "End line number")
+                    ],
+                    required: ["file", "startLine", "endLine"]
+                )
+            ),
+            MCPTool(
+                name: "analyze_api_surface",
+                description: "Get full type signatures, methods, and properties for all public APIs",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "generate_migration_checklist",
+                description: "Generate a phased migration plan from auth analysis",
+                inputSchema: MCPInputSchema()
+            ),
+            MCPTool(
+                name: "analyze_auth_migration",
+                description: "Track authentication code patterns for migration planning",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
+                    ]
+                )
             )
         ]
         
@@ -611,6 +801,74 @@ class MCPServer {
             return executeInvalidateCache(path: path)
         case "rescan_project":
             return executeRescanProject()
+        // Additional analysis tools
+        case "find_singletons":
+            let path = arguments["path"]?.stringValue
+            return try executeFindSingletons(path: path)
+        case "find_types":
+            let path = arguments["path"]?.stringValue
+            return try executeFindTypes(path: path)
+        case "find_tech_debt":
+            let path = arguments["path"]?.stringValue
+            return try executeFindTechDebt(path: path)
+        case "find_delegates":
+            let path = arguments["path"]?.stringValue
+            return try executeFindDelegates(path: path)
+        case "find_unused_code":
+            let path = arguments["path"]?.stringValue
+            return try executeFindUnusedCode(path: path)
+        case "find_network_calls":
+            let path = arguments["path"]?.stringValue
+            return try executeFindNetworkCalls(path: path)
+        case "find_reactive":
+            let path = arguments["path"]?.stringValue
+            return try executeFindReactive(path: path)
+        case "find_viewcontrollers":
+            let path = arguments["path"]?.stringValue
+            return try executeFindViewControllers(path: path)
+        case "find_localization_issues":
+            let path = arguments["path"]?.stringValue
+            return try executeFindLocalizationIssues(path: path)
+        case "find_accessibility_issues":
+            let path = arguments["path"]?.stringValue
+            return try executeFindAccessibilityIssues(path: path)
+        case "find_threading_issues":
+            let path = arguments["path"]?.stringValue
+            return try executeFindThreadingIssues(path: path)
+        case "analyze_swiftui":
+            let path = arguments["path"]?.stringValue
+            return try executeAnalyzeSwiftUI(path: path)
+        case "analyze_uikit":
+            let path = arguments["path"]?.stringValue
+            return try executeAnalyzeUIKit(path: path)
+        case "analyze_tests":
+            return try executeAnalyzeTests()
+        case "analyze_dependencies":
+            return try executeAnalyzeDependencies()
+        case "analyze_coredata":
+            let path = arguments["path"]?.stringValue
+            return try executeAnalyzeCoreData(path: path)
+        case "analyze_docs":
+            let path = arguments["path"]?.stringValue
+            return try executeAnalyzeDocs(path: path)
+        case "find_retain_cycles":
+            let path = arguments["path"]?.stringValue
+            return try executeFindRetainCycles(path: path)
+        case "get_refactor_detail":
+            guard let file = arguments["file"]?.stringValue,
+                  let startLine = arguments["startLine"]?.intValue,
+                  let endLine = arguments["endLine"]?.intValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameters: file, startLine, endLine"])
+            }
+            return try executeGetRefactorDetail(file: file, startLine: startLine, endLine: endLine)
+        case "analyze_api_surface":
+            let path = arguments["path"]?.stringValue
+            return try executeAnalyzeAPISurface(path: path)
+        case "generate_migration_checklist":
+            return try executeGenerateMigrationChecklist()
+        case "analyze_auth_migration":
+            let path = arguments["path"]?.stringValue
+            return try executeAnalyzeAuthMigration(path: path)
         default:
             throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"])
         }
@@ -886,6 +1144,300 @@ class MCPServer {
     private func executeRescanProject() -> String {
         cache.scan(verbose: verbose)
         return "{\"status\": \"rescanned\", \"fileCount\": \(cache.swiftFileURLs.count)}"
+    }
+    
+    // MARK: - Additional Tool Implementations
+    
+    private func getFiles(for path: String?) throws -> [URL] {
+        if let path = path {
+            let matches = cache.swiftFileURLs.filter {
+                $0.lastPathComponent == path || $0.path.hasSuffix(path)
+            }
+            guard !matches.isEmpty else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path)"])
+            }
+            return matches
+        }
+        return cache.swiftFileURLs
+    }
+    
+    private func executeFindSingletons(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        
+        var nodes: [FileNode] = []
+        for fileURL in files {
+            if let node = analyzeSingletonFile(at: fileURL, relativeTo: projectRoot) {
+                if !node.references.isEmpty || !node.imports.isEmpty {
+                    nodes.append(node)
+                }
+            }
+        }
+        
+        let summary = buildSingletonSummary(from: nodes)
+        let result = ExtendedAnalysisResult(
+            analyzedAt: ISO8601DateFormatter().string(from: Date()),
+            rootPath: projectRoot.path,
+            fileCount: files.count,
+            files: nodes.sorted { $0.references.count > $1.references.count },
+            summary: summary,
+            targets: nil
+        )
+        
+        return encodeToJSON(result)
+    }
+    
+    private func executeFindTypes(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = DependencyGraphAnalyzer()
+        let report = analyzer.analyzeTypes(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindTechDebt(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = TechDebtAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindDelegates(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let depAnalyzer = DependencyGraphAnalyzer()
+        let typeMap = depAnalyzer.analyzeTypes(files: files, relativeTo: projectRoot)
+        let analyzer = DelegateAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot, typeMap: typeMap)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindUnusedCode(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = UnusedCodeAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot, targetFiles: nil)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindNetworkCalls(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = NetworkAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindReactive(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = ReactiveAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindViewControllers(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = ViewControllerAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindLocalizationIssues(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = LocalizationAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindAccessibilityIssues(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = AccessibilityAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindThreadingIssues(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = ThreadSafetyAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeAnalyzeSwiftUI(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = SwiftUIAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeAnalyzeUIKit(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = UIKitAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeAnalyzeTests() throws -> String {
+        // For tests, scan parent directory to find sibling test folders
+        let parentURL = projectRoot.deletingLastPathComponent()
+        let allFiles = findAllSwiftFiles(in: parentURL)
+        let analyzer = TestCoverageAnalyzer()
+        let report = analyzer.analyze(files: allFiles, relativeTo: parentURL, targetAnalysis: nil)
+        return encodeToJSON(report)
+    }
+    
+    private func executeAnalyzeDependencies() throws -> String {
+        let analyzer = DependencyManagerAnalyzer()
+        let report = analyzer.analyze(projectRoot: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeAnalyzeCoreData(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = CoreDataAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeAnalyzeDocs(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = DocumentationAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeFindRetainCycles(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = RetainCycleAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeGetRefactorDetail(file: String, startLine: Int, endLine: Int) throws -> String {
+        let matches = cache.swiftFileURLs.filter {
+            $0.lastPathComponent == file || $0.path.hasSuffix(file)
+        }
+        
+        guard !matches.isEmpty else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(file)"])
+        }
+        
+        let fileURL = matches[0]
+        guard let sourceText = try? String(contentsOf: fileURL) else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not read file: \(file)"])
+        }
+        
+        let lines = sourceText.components(separatedBy: "\n")
+        let startIdx = max(0, startLine - 1)
+        let endIdx = min(lines.count, endLine)
+        let blockLines = Array(lines[startIdx..<endIdx])
+        let blockCode = blockLines.joined(separator: "\n")
+        
+        var externalVars: Set<String> = []
+        var functionCalls: Set<String> = []
+        var typeRefs: Set<String> = []
+        
+        let varPattern = #"\b([a-z][a-zA-Z0-9]*)\b"#
+        let funcPattern = #"\b([a-zA-Z][a-zA-Z0-9]*)\s*\("#
+        let typePattern = #"\b([A-Z][a-zA-Z0-9]*)\b"#
+        
+        if let varRegex = try? NSRegularExpression(pattern: varPattern) {
+            let range = NSRange(blockCode.startIndex..., in: blockCode)
+            for match in varRegex.matches(in: blockCode, range: range) {
+                if let r = Range(match.range(at: 1), in: blockCode) {
+                    externalVars.insert(String(blockCode[r]))
+                }
+            }
+        }
+        
+        if let funcRegex = try? NSRegularExpression(pattern: funcPattern) {
+            let range = NSRange(blockCode.startIndex..., in: blockCode)
+            for match in funcRegex.matches(in: blockCode, range: range) {
+                if let r = Range(match.range(at: 1), in: blockCode) {
+                    functionCalls.insert(String(blockCode[r]))
+                }
+            }
+        }
+        
+        if let typeRegex = try? NSRegularExpression(pattern: typePattern) {
+            let range = NSRange(blockCode.startIndex..., in: blockCode)
+            for match in typeRegex.matches(in: blockCode, range: range) {
+                if let r = Range(match.range(at: 1), in: blockCode) {
+                    typeRefs.insert(String(blockCode[r]))
+                }
+            }
+        }
+        
+        let keywords: Set<String> = ["if", "else", "let", "var", "for", "in", "return", "guard", "true", "false", "nil", "self"]
+        externalVars = externalVars.subtracting(keywords)
+        
+        let funcName = "extractedFunction"
+        let commonParams = ["ctx", "verbose", "rootURL", "rootPath", "swiftFiles", "outputFile", "runAll"]
+        let likelyParams = externalVars.filter { commonParams.contains($0) }.sorted()
+        
+        let paramList = likelyParams.map { param -> String in
+            switch param {
+            case "ctx": return "ctx: AnalysisContext"
+            case "verbose": return "verbose: Bool"
+            case "rootURL": return "rootURL: URL"
+            case "rootPath": return "rootPath: String"
+            case "swiftFiles": return "swiftFiles: [URL]"
+            case "outputFile": return "outputFile: String?"
+            case "runAll": return "runAll: Bool"
+            default: return "\(param): Any"
+            }
+        }
+        
+        let hasReturn = blockCode.contains("return")
+        let returnType = hasReturn ? " -> Bool" : ""
+        let signature = "func \(funcName)(\(paramList.joined(separator: ", ")))\(returnType)"
+        let indentedCode = blockLines.map { "    \($0)" }.joined(separator: "\n")
+        let generatedFunc = "\(signature) {\n\(indentedCode)\n}"
+        
+        struct Detail: Codable {
+            let file: String
+            let lineRange: String
+            let lineCount: Int
+            let fullCode: String
+            let variablesUsed: [String]
+            let functionsCalled: [String]
+            let typesReferenced: [String]
+            let suggestedSignature: String
+            let replacementCall: String
+            let generatedFunction: String
+        }
+        
+        let detail = Detail(
+            file: file,
+            lineRange: "\(startLine)-\(endLine)",
+            lineCount: blockLines.count,
+            fullCode: blockCode,
+            variablesUsed: Array(externalVars).sorted(),
+            functionsCalled: Array(functionCalls).sorted(),
+            typesReferenced: Array(typeRefs).sorted(),
+            suggestedSignature: signature,
+            replacementCall: hasReturn ? "if \(funcName)(\(likelyParams.joined(separator: ", "))) { return }" : "\(funcName)(\(likelyParams.joined(separator: ", ")))",
+            generatedFunction: generatedFunc
+        )
+        
+        return encodeToJSON(detail)
+    }
+    
+    private func executeAnalyzeAPISurface(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = APIAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
+    }
+    
+    private func executeGenerateMigrationChecklist() throws -> String {
+        let authAnalyzer = AuthMigrationAnalyzer()
+        let authReport = authAnalyzer.analyze(files: cache.swiftFileURLs, relativeTo: projectRoot)
+        let generator = MigrationChecklistGenerator()
+        let checklist = generator.generateAuthMigrationChecklist(from: authReport)
+        return encodeToJSON(checklist)
+    }
+    
+    private func executeAnalyzeAuthMigration(path: String?) throws -> String {
+        let files = try getFiles(for: path)
+        let analyzer = AuthMigrationAnalyzer()
+        let report = analyzer.analyze(files: files, relativeTo: projectRoot)
+        return encodeToJSON(report)
     }
     
     // MARK: - Response Helpers
