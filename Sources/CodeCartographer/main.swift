@@ -330,6 +330,11 @@ func main() {
     if let targetIndex = args.firstIndex(of: "--target"), targetIndex + 1 < args.count {
         targetFilter = args[targetIndex + 1]
     }
+    
+    var pathFilter: String? = nil
+    if let pathIndex = args.firstIndex(of: "--path"), pathIndex + 1 < args.count {
+        pathFilter = args[pathIndex + 1]
+    }
 
     if verbose {
         if let singleFile = singleFileMode {
@@ -384,11 +389,47 @@ func main() {
             exit(1)
         }
         
-        let targetFileNames = Set(target.files)
-        swiftFiles = swiftFiles.filter { targetFileNames.contains($0.lastPathComponent) }
+        // Filter files using fileToTargets mapping - only include files whose filename
+        // is in the target AND the fileToTargets map confirms this target contains that file
+        let targetFileSet = Set(target.files)
+        swiftFiles = swiftFiles.filter { url in
+            let filename = url.lastPathComponent
+            // File must be in target's file list
+            guard targetFileSet.contains(filename) else { return false }
+            // And fileToTargets must confirm this file is in our target
+            if let targets = ta.fileToTargets[filename] {
+                return targets.contains(targetName)
+            }
+            return true  // If not in map, include it (conservative)
+        }
         
         if verbose {
             fputs("🎯 Filtered to target '\(targetName)': \(swiftFiles.count) files\n", stderr)
+            
+            // Warn about files with duplicate names (limitation of Xcode project format)
+            let filenameGroups = Dictionary(grouping: swiftFiles, by: { $0.lastPathComponent })
+            let duplicates = filenameGroups.filter { $0.value.count > 1 }
+            if !duplicates.isEmpty {
+                fputs("   ⚠️ \(duplicates.count) filenames appear in multiple directories (Xcode limitation)\n", stderr)
+            }
+        }
+    }
+    
+    // Filter to specific path/folder if requested
+    if let pathPrefix = pathFilter {
+        let beforeCount = swiftFiles.count
+        swiftFiles = swiftFiles.filter { url in
+            let relativePath = url.path.replacingOccurrences(of: rootPath + "/", with: "")
+            return relativePath.hasPrefix(pathPrefix) || relativePath.contains("/\(pathPrefix)/") || relativePath.contains("/\(pathPrefix)")
+        }
+        
+        if swiftFiles.isEmpty {
+            fputs("❌ No files found matching path '\(pathPrefix)'\n", stderr)
+            exit(1)
+        }
+        
+        if verbose {
+            fputs("📂 Filtered to path '\(pathPrefix)': \(swiftFiles.count) files (from \(beforeCount))\n", stderr)
         }
     }
     

@@ -123,6 +123,11 @@ class TargetAnalyzer {
     private func extractFilesFromSourcesPhase(uuid: String, in content: String) -> [String] {
         var files: [String] = []
         
+        // Build fileRef UUID -> path map from PBXFileReference
+        let fileRefMap = buildFileRefPathMap(from: content)
+        // Build buildFile UUID -> fileRef UUID map from PBXBuildFile
+        let buildFileMap = buildBuildFileRefMap(from: content)
+        
         // Find the PBXSourcesBuildPhase section
         guard let startRange = content.range(of: "/* Begin PBXSourcesBuildPhase section */"),
               let endRange = content.range(of: "/* End PBXSourcesBuildPhase section */") else {
@@ -139,21 +144,87 @@ class TargetAnalyzer {
            let filesRange = Range(match.range(at: 1), in: section) {
             let filesContent = String(section[filesRange])
             
-            // Extract file names: UUID /* FileName.swift in Sources */
-            let filePattern = #"\/\* ([^*]+\.swift) in Sources \*\/"#
-            if let fileRegex = try? NSRegularExpression(pattern: filePattern) {
+            // Extract build file UUIDs: UUID /* FileName.swift in Sources */
+            let buildFilePattern = #"([A-F0-9]{24}) \/\* ([^*]+\.swift) in Sources \*\/"#
+            if let fileRegex = try? NSRegularExpression(pattern: buildFilePattern) {
                 let range = NSRange(filesContent.startIndex..., in: filesContent)
                 fileRegex.enumerateMatches(in: filesContent, range: range) { m, _, _ in
                     if let m = m,
-                       let nameRange = Range(m.range(at: 1), in: filesContent) {
-                        let name = String(filesContent[nameRange]).trimmingCharacters(in: .whitespaces)
-                        files.append(name)
+                       let buildUUIDRange = Range(m.range(at: 1), in: filesContent),
+                       let nameRange = Range(m.range(at: 2), in: filesContent) {
+                        let buildUUID = String(filesContent[buildUUIDRange])
+                        let fallbackName = String(filesContent[nameRange]).trimmingCharacters(in: .whitespaces)
+                        
+                        // Try to get full path via buildFile -> fileRef -> path
+                        if let fileRefUUID = buildFileMap[buildUUID],
+                           let path = fileRefMap[fileRefUUID] {
+                            files.append(path)
+                        } else {
+                            // Fallback to just filename
+                            files.append(fallbackName)
+                        }
                     }
                 }
             }
         }
         
         return files
+    }
+    
+    private func buildFileRefPathMap(from content: String) -> [String: String] {
+        var map: [String: String] = [:]
+        
+        guard let startRange = content.range(of: "/* Begin PBXFileReference section */"),
+              let endRange = content.range(of: "/* End PBXFileReference section */") else {
+            return map
+        }
+        
+        let section = String(content[startRange.upperBound..<endRange.lowerBound])
+        
+        // Pattern: UUID /* filename */ = {...path = "relative/path"...}
+        let pattern = #"([A-F0-9]{24}) \/\* [^*]+ \*\/ = \{[^}]*path = "?([^";]+)"?[^}]*\}"#
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(section.startIndex..., in: section)
+            regex.enumerateMatches(in: section, range: range) { m, _, _ in
+                if let m = m,
+                   let uuidRange = Range(m.range(at: 1), in: section),
+                   let pathRange = Range(m.range(at: 2), in: section) {
+                    let uuid = String(section[uuidRange])
+                    let path = String(section[pathRange])
+                    map[uuid] = path
+                }
+            }
+        }
+        
+        return map
+    }
+    
+    private func buildBuildFileRefMap(from content: String) -> [String: String] {
+        var map: [String: String] = [:]
+        
+        guard let startRange = content.range(of: "/* Begin PBXBuildFile section */"),
+              let endRange = content.range(of: "/* End PBXBuildFile section */") else {
+            return map
+        }
+        
+        let section = String(content[startRange.upperBound..<endRange.lowerBound])
+        
+        // Pattern: UUID /* file */ = {isa = PBXBuildFile; fileRef = UUID /* file */; ...}
+        let pattern = #"([A-F0-9]{24}) \/\* [^*]+ \*\/ = \{[^}]*fileRef = ([A-F0-9]{24})"#
+        if let regex = try? NSRegularExpression(pattern: pattern) {
+            let range = NSRange(section.startIndex..., in: section)
+            regex.enumerateMatches(in: section, range: range) { m, _, _ in
+                if let m = m,
+                   let buildUUIDRange = Range(m.range(at: 1), in: section),
+                   let fileRefUUIDRange = Range(m.range(at: 2), in: section) {
+                    let buildUUID = String(section[buildUUIDRange])
+                    let fileRefUUID = String(section[fileRefUUIDRange])
+                    map[buildUUID] = fileRefUUID
+                }
+            }
+        }
+        
+        return map
     }
     
     private func findSwiftFilesInRepo() -> [String] {

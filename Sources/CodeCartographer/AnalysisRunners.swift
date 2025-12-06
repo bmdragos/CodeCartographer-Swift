@@ -889,10 +889,26 @@ struct HealthRefactorSummary: Codable {
 }
 
 func runHealthAnalysis(targetFile: String, files: [URL], rootURL: URL, verbose: Bool, outputFile: String?) -> Bool {
-    guard let fileURL = files.first(where: { $0.lastPathComponent == targetFile || $0.path.hasSuffix(targetFile) }) else {
+    // Find all matching files (by exact path suffix or filename)
+    let matches = files.filter { $0.lastPathComponent == targetFile || $0.path.hasSuffix(targetFile) }
+    
+    guard !matches.isEmpty else {
         fputs("❌ File not found: \(targetFile)\n", stderr)
         return true
     }
+    
+    // If multiple matches, require more specific path
+    if matches.count > 1 {
+        fputs("❌ Ambiguous filename '\(targetFile)' matches \(matches.count) files:\n", stderr)
+        for match in matches {
+            let relativePath = match.path.replacingOccurrences(of: rootURL.path + "/", with: "")
+            fputs("   - \(relativePath)\n", stderr)
+        }
+        fputs("   Please specify a more complete path (e.g., --health \"Account/Account.swift\")\n", stderr)
+        return true
+    }
+    
+    let fileURL = matches[0]
     
     if verbose {
         fputs("🏥 Running health check for \(targetFile)...\n", stderr)
@@ -918,8 +934,9 @@ func runHealthAnalysis(targetFile: String, files: [URL], rootURL: URL, verbose: 
     score -= min(30, smellReport.totalSmells * 2)
     score -= min(30, metricsReport.godFunctions.count * 10)
     score -= min(20, retainReport.riskScore / 5)
-    score -= min(20, Int(metricsReport.averageComplexity) - 5)
-    score = max(0, score)
+    // Only deduct if complexity > 5 (using max(0,...) to avoid adding points)
+    score -= min(20, max(0, Int(metricsReport.averageComplexity) - 5))
+    score = min(100, max(0, score))  // Clamp to 0-100
     
     let maxComplexity = metricsReport.functions.map { $0.complexity }.max() ?? 0
     
@@ -974,10 +991,22 @@ struct ExtractionDetail: Codable {
 }
 
 func runRefactorDetailAnalysis(target: (file: String, start: Int, end: Int), files: [URL], verbose: Bool, outputFile: String?) -> Bool {
-    guard let fileURL = files.first(where: { $0.lastPathComponent == target.file || $0.path.hasSuffix(target.file) }) else {
+    // Find all matching files
+    let matches = files.filter { $0.lastPathComponent == target.file || $0.path.hasSuffix(target.file) }
+    
+    guard !matches.isEmpty else {
         fputs("❌ File not found: \(target.file)\n", stderr)
         return true
     }
+    
+    // If multiple matches, require more specific path
+    if matches.count > 1 {
+        fputs("❌ Ambiguous filename '\(target.file)' matches \(matches.count) files.\n", stderr)
+        fputs("   Please specify a more complete path in the format \"path/to/File.swift:START-END\"\n", stderr)
+        return true
+    }
+    
+    let fileURL = matches[0]
     
     guard let sourceText = try? String(contentsOf: fileURL) else {
         fputs("❌ Could not read file: \(target.file)\n", stderr)

@@ -413,6 +413,49 @@ final class FunctionStructureVisitor: SyntaxVisitor {
             ))
         }
         
+        // Also check MARK sections as extraction candidates (general pattern)
+        for section in markSections {
+            let lineCount = section.lineCount
+            
+            // Only suggest sections > 20 lines
+            guard lineCount > 20 else { continue }
+            
+            // Generate a function name from the MARK name
+            let cleanName = section.name
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { !$0.isEmpty }
+                .map { $0.capitalized }
+                .joined()
+            let funcName = cleanName.isEmpty ? "extractedSection\(section.startLine)" : "handle\(cleanName)"
+            
+            // Check if we already have a suggestion for this range
+            let alreadySuggested = suggestions.contains { s in
+                abs(s.startLine - section.startLine) < 5 && abs(s.endLine - section.endLine) < 5
+            }
+            guard !alreadySuggested else { continue }
+            
+            let blockLines = getBlockLines(from: section.startLine, to: section.endLine)
+            let previewLines = lineCount > 50 ? 10 : (lineCount > 20 ? 5 : 3)
+            let blockId = "\(containerFile):\(containerFunction)#\(funcName)"
+            
+            suggestions.append(ExtractableBlock(
+                suggestedName: funcName,
+                startLine: section.startLine,
+                endLine: section.endLine,
+                lineCount: lineCount,
+                complexity: 0,
+                parameters: [],
+                returns: nil,
+                extractionDifficulty: .medium,
+                reason: "MARK section '\(section.name)' is \(lineCount) lines",
+                usedAnalyzers: [],
+                specialDependencies: [],
+                codePreview: blockLines.prefix(previewLines).joined(separator: "\n"),
+                generatedSignature: "func \(funcName)()",
+                blockId: blockId
+            ))
+        }
+        
         return suggestions
     }
     

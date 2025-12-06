@@ -40,7 +40,9 @@ struct PropertyAccess: Codable {
 final class PropertyAccessVisitor: SyntaxVisitor {
     let filePath: String
     let sourceText: String
-    let targetPattern: String  // e.g., "Account.sharedInstance()"
+    let targetPattern: String  // e.g., "Account.sharedInstance()" or "Account.*" for wildcard
+    private let isWildcard: Bool  // true if pattern ends with ".*"
+    private let wildcardPrefix: String  // e.g., "Account" if pattern is "Account.*"
     
     private(set) var accesses: [String: [PropertyAccess]] = [:]  // property -> accesses
     private var currentContext: String?
@@ -49,7 +51,26 @@ final class PropertyAccessVisitor: SyntaxVisitor {
         self.filePath = filePath
         self.sourceText = sourceText
         self.targetPattern = targetPattern
+        
+        // Check for wildcard pattern "ClassName.*"
+        if targetPattern.hasSuffix(".*") {
+            self.isWildcard = true
+            self.wildcardPrefix = String(targetPattern.dropLast(2)) + "."
+        } else {
+            self.isWildcard = false
+            self.wildcardPrefix = ""
+        }
+        
         super.init(viewMode: .sourceAccurate)
+    }
+    
+    private func matchesPattern(_ expression: String) -> Bool {
+        if isWildcard {
+            // Match "Account.anything" or "Account.anything.more"
+            return expression.contains(wildcardPrefix)
+        } else {
+            return expression.contains(targetPattern)
+        }
     }
     
     override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
@@ -65,8 +86,8 @@ final class PropertyAccessVisitor: SyntaxVisitor {
     override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
         let fullExpr = node.description.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Check if this accesses our target
-        if fullExpr.contains(targetPattern) {
+        // Check if this accesses our target (supports wildcards)
+        if matchesPattern(fullExpr) {
             let propertyName = node.declName.baseName.text
             
             // Determine access type
@@ -104,7 +125,7 @@ final class PropertyAccessVisitor: SyntaxVisitor {
         if opText == "=" || opText == "+=" || opText == "-=" {
             let leftSide = node.leftOperand.description.trimmingCharacters(in: .whitespacesAndNewlines)
             
-            if leftSide.contains(targetPattern) {
+            if matchesPattern(leftSide) {
                 // Extract property name from left side
                 if let lastDot = leftSide.lastIndex(of: ".") {
                     let propertyName = String(leftSide[leftSide.index(after: lastDot)...])
