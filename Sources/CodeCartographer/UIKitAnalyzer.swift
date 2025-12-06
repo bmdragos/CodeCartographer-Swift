@@ -294,10 +294,19 @@ final class UIKitVisitor: SyntaxVisitor {
     
     // Detect delegate patterns
     override func visit(_ node: VariableDeclSyntax) -> SyntaxVisitorContinueKind {
-        let declText = node.description.lowercased()
-        
-        if declText.contains("delegate") || declText.contains("datasource") {
-            patterns.delegatePatterns += 1
+        for binding in node.bindings {
+            if let name = binding.pattern.as(IdentifierPatternSyntax.self)?.identifier.text {
+                let lowerName = name.lowercased()
+                // Check if property NAME is a delegate (not just contains "delegate" anywhere)
+                let isDelegateProperty = lowerName == "delegate" || 
+                                         lowerName == "datasource" ||
+                                         lowerName.hasSuffix("delegate") ||
+                                         lowerName.hasSuffix("datasource")
+                
+                if isDelegateProperty {
+                    patterns.delegatePatterns += 1
+                }
+            }
         }
         
         return .visitChildren
