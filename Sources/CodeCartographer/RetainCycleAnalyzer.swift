@@ -103,14 +103,20 @@ final class RetainCycleVisitor: SyntaxVisitor {
     
     // Detect delegate properties
     override func visit(_ node: VariableDeclSyntax) -> SyntaxVisitorContinueKind {
-        let declText = node.description.lowercased()
+        let isWeak = node.modifiers.contains { $0.name.text == "weak" }
         
-        // Check for delegate/dataSource properties
-        if declText.contains("delegate") || declText.contains("datasource") {
-            let isWeak = node.modifiers.contains { $0.name.text == "weak" }
+        for binding in node.bindings {
+            let propName = binding.pattern.description.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             
-            for binding in node.bindings {
-                let propName = binding.pattern.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Check if property NAME indicates a delegate (not just any property with "delegate" in declaration)
+            // Must be: "delegate", "dataSource", or end with "Delegate"/"DataSource"
+            let isDelegateProperty = propName == "delegate" || 
+                                     propName == "datasource" ||
+                                     propName.hasSuffix("delegate") ||
+                                     propName.hasSuffix("datasource")
+            
+            if isDelegateProperty {
+                let originalName = binding.pattern.description.trimmingCharacters(in: .whitespacesAndNewlines)
                 
                 if isWeak {
                     patterns.weakDelegates += 1
@@ -120,16 +126,16 @@ final class RetainCycleVisitor: SyntaxVisitor {
                     delegateIssues.append(DelegateRetainIssue(
                         file: filePath,
                         line: lineNumber(for: node.position),
-                        propertyName: propName,
+                        propertyName: originalName,
                         isWeak: false,
-                        suggestion: "Add 'weak' to prevent retain cycle: weak var \(propName)"
+                        suggestion: "Add 'weak' to prevent retain cycle: weak var \(originalName)"
                     ))
                     
                     potentialCycles.append(PotentialRetainCycle(
                         file: filePath,
                         line: lineNumber(for: node.position),
                         cycleType: .strongDelegateProperty,
-                        description: "Delegate '\(propName)' should be weak to prevent retain cycle",
+                        description: "Delegate '\(originalName)' should be weak to prevent retain cycle",
                         severity: .high
                     ))
                 }
@@ -137,10 +143,16 @@ final class RetainCycleVisitor: SyntaxVisitor {
         }
         
         // Check for closure properties (potential retain cycles)
+        // A closure type has format: (Args) -> ReturnType or @escaping (Args) -> ReturnType
         for binding in node.bindings {
             if let typeAnnotation = binding.typeAnnotation?.type.description {
-                if typeAnnotation.contains("->") || typeAnnotation.contains("() ->") {
-                    // This is a closure property
+                // Must have "->" AND "(" to be a closure type
+                // This excludes dictionary types [K: V] and comments with "->"
+                let isClosureType = typeAnnotation.contains("->") && 
+                                    typeAnnotation.contains("(") &&
+                                    !typeAnnotation.hasPrefix("[")  // Exclude dictionary types
+                
+                if isClosureType {
                     let propName = binding.pattern.description.trimmingCharacters(in: .whitespacesAndNewlines)
                     
                     potentialCycles.append(PotentialRetainCycle(

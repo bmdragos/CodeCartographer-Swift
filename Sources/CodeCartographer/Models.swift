@@ -25,14 +25,6 @@ struct SymbolReference: Codable {
     let context: String? // function/method name where reference occurs
 }
 
-struct AnalysisResult: Codable {
-    let analyzedAt: String
-    let rootPath: String
-    let fileCount: Int
-    var files: [FileNode]
-    var summary: AnalysisSummary
-}
-
 struct AnalysisSummary: Codable {
     var totalReferences: Int
     var singletonUsage: [String: Int]  // symbol -> count
