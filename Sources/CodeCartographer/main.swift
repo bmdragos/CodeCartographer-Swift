@@ -6,7 +6,11 @@ import SwiftParser
 
 func findSwiftFiles(in directory: URL, excluding: [String] = [], includeTests: Bool = false) -> [URL] {
     let fm = FileManager.default
-    guard let enumerator = fm.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+    
+    // Resolve symlinks to get the real path
+    let resolvedDirectory = directory.resolvingSymlinksInPath()
+    
+    guard let enumerator = fm.enumerator(at: resolvedDirectory, includingPropertiesForKeys: nil) else {
         return []
     }
 
