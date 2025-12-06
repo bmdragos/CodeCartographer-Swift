@@ -69,12 +69,6 @@ swift build -c release
 
 The binary will be at `.build/release/codecart`
 
-### Homebrew (coming soon)
-
-```bash
-brew install codecartographer
-```
-
 ## Usage
 
 ```bash
