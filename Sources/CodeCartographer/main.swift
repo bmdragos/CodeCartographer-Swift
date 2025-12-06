@@ -127,6 +127,7 @@ let analysisModes: [(flag: String, name: String, description: String)] = [
     ("--docs", "Documentation", "Documentation coverage for public APIs"),
     ("--retain-cycles", "Retain Cycles", "Potential memory leaks and retain cycles"),
     ("--refactor", "Refactoring", "God functions with extraction suggestions"),
+    ("--refactor-detail F:S-E", "Extract Detail", "Full extraction info for FILE:START-END"),
     ("--api", "API Surface", "Full type signatures, methods, properties"),
     ("--summary", "Summary", "Compact AI-friendly overview of code health"),
     ("--property TARGET", "Property Access", "Track all accesses to a specific pattern"),
@@ -309,6 +310,23 @@ func main() {
     let apiMode = args.contains("--api")
     let runAll = args.contains("--all")
     let summaryMode = args.contains("--summary")
+    
+    // Refactor detail mode: --refactor-detail FILE:START-END
+    var refactorDetailTarget: (file: String, start: Int, end: Int)? = nil
+    if let detailIndex = args.firstIndex(of: "--refactor-detail"), detailIndex + 1 < args.count {
+        let target = args[detailIndex + 1]
+        // Parse FILE:START-END format
+        let parts = target.split(separator: ":")
+        if parts.count == 2 {
+            let file = String(parts[0])
+            let lineRange = parts[1].split(separator: "-")
+            if lineRange.count == 2,
+               let start = Int(lineRange[0]),
+               let end = Int(lineRange[1]) {
+                refactorDetailTarget = (file, start, end)
+            }
+        }
+    }
     
     // Property tracking target
     var propertyTarget: String? = nil
@@ -757,7 +775,104 @@ func main() {
         if runAPIAnalysis(ctx: ctx, isSpecificMode: apiMode, runAll: runAll) { return }
     }
     
-    // Singleton/global state analysis (explicit mode required now)
+    // Refactor detail mode - show everything needed for extraction
+    if let target = refactorDetailTarget {
+        // Find the file
+        guard let fileURL = swiftFiles.first(where: { $0.lastPathComponent == target.file || $0.path.hasSuffix(target.file) }) else {
+            fputs("❌ File not found: \(target.file)\n", stderr)
+            return
+        }
+        
+        guard let sourceText = try? String(contentsOf: fileURL) else {
+            fputs("❌ Could not read file: \(target.file)\n", stderr)
+            return
+        }
+        
+        let lines = sourceText.components(separatedBy: "\n")
+        let startIdx = max(0, target.start - 1)
+        let endIdx = min(lines.count, target.end)
+        let blockLines = Array(lines[startIdx..<endIdx])
+        let blockCode = blockLines.joined(separator: "\n")
+        
+        // Analyze what the block uses
+        var externalVars: Set<String> = []
+        var functionCalls: Set<String> = []
+        var typeRefs: Set<String> = []
+        
+        // Simple pattern matching for variables, calls, and types
+        let varPattern = #"\b([a-z][a-zA-Z0-9]*)\b"#
+        let funcPattern = #"\b([a-zA-Z][a-zA-Z0-9]*)\s*\("#
+        let typePattern = #"\b([A-Z][a-zA-Z0-9]*)\b"#
+        
+        if let varRegex = try? NSRegularExpression(pattern: varPattern) {
+            let range = NSRange(blockCode.startIndex..., in: blockCode)
+            for match in varRegex.matches(in: blockCode, range: range) {
+                if let r = Range(match.range(at: 1), in: blockCode) {
+                    externalVars.insert(String(blockCode[r]))
+                }
+            }
+        }
+        
+        if let funcRegex = try? NSRegularExpression(pattern: funcPattern) {
+            let range = NSRange(blockCode.startIndex..., in: blockCode)
+            for match in funcRegex.matches(in: blockCode, range: range) {
+                if let r = Range(match.range(at: 1), in: blockCode) {
+                    functionCalls.insert(String(blockCode[r]))
+                }
+            }
+        }
+        
+        if let typeRegex = try? NSRegularExpression(pattern: typePattern) {
+            let range = NSRange(blockCode.startIndex..., in: blockCode)
+            for match in typeRegex.matches(in: blockCode, range: range) {
+                if let r = Range(match.range(at: 1), in: blockCode) {
+                    typeRefs.insert(String(blockCode[r]))
+                }
+            }
+        }
+        
+        // Filter common keywords
+        let keywords: Set<String> = ["if", "else", "let", "var", "for", "in", "return", "guard", "true", "false", "nil", "self"]
+        externalVars = externalVars.subtracting(keywords)
+        
+        // Build extraction detail report
+        struct ExtractionDetail: Codable {
+            let file: String
+            let lineRange: String
+            let lineCount: Int
+            let fullCode: String
+            let variablesUsed: [String]
+            let functionsCalled: [String]
+            let typesReferenced: [String]
+            let suggestedSignature: String
+            let replacementCall: String
+        }
+        
+        let funcName = "extractedFunction"  // User can rename
+        let detail = ExtractionDetail(
+            file: target.file,
+            lineRange: "\(target.start)-\(target.end)",
+            lineCount: blockLines.count,
+            fullCode: blockCode,
+            variablesUsed: Array(externalVars).sorted(),
+            functionsCalled: Array(functionCalls).sorted(),
+            typesReferenced: Array(typeRefs).sorted(),
+            suggestedSignature: "func \(funcName)() { ... }",
+            replacementCall: "\(funcName)()"
+        )
+        
+        if verbose {
+            fputs("📋 Extraction detail for \(target.file):\(target.start)-\(target.end)\n", stderr)
+            fputs("   Lines: \(blockLines.count)\n", stderr)
+            fputs("   Variables: \(externalVars.count)\n", stderr)
+            fputs("   Function calls: \(functionCalls.count)\n", stderr)
+            fputs("   Types: \(typeRefs.count)\n", stderr)
+        }
+        
+        outputJSON(detail, to: outputFile)
+        return
+    }
+    
     // Summary mode - compact AI-friendly overview
     if summaryMode {
         if verbose {
