@@ -3,7 +3,8 @@ import Foundation
 // MARK: - Migration Checklist Generator
 
 struct MigrationChecklist: Codable {
-    let generatedAt: String
+    let analyzedAt: String  // Standardized field name
+    let generatedAt: String // Alias for compatibility
     let migrationName: String
     var totalTasks: Int
     var estimatedEffort: String
@@ -205,9 +206,11 @@ class MigrationChecklistGenerator {
         let markdown = generateMarkdown(phases: phases, totalTasks: totalTasks, effort: effort)
         
         let dateFormatter = ISO8601DateFormatter()
+        let timestamp = dateFormatter.string(from: Date())
         
         return MigrationChecklist(
-            generatedAt: dateFormatter.string(from: Date()),
+            analyzedAt: timestamp,
+            generatedAt: timestamp,
             migrationName: "AuthManager Migration",
             totalTasks: totalTasks,
             estimatedEffort: effort,

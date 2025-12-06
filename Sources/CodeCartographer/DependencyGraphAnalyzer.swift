@@ -61,6 +61,7 @@ struct TypeDefinition: Codable {
 }
 
 struct TypeMap: Codable {
+    let analyzedAt: String
     var definitions: [TypeDefinition]
     var typeToFile: [String: String]  // type name -> defining file
     var fileToTypes: [String: [String]]  // file -> types defined
@@ -261,6 +262,7 @@ class DependencyGraphAnalyzer {
         }
         
         return TypeMap(
+            analyzedAt: ISO8601DateFormatter().string(from: Date()),
             definitions: allDefinitions,
             typeToFile: typeToFile,
             fileToTypes: fileToTypes,
