@@ -147,7 +147,7 @@ func printHelp() {
       codecart /path/to/project --smells --verbose  Run code smell analysis
       codecart /path/to/project --all --verbose     Run all analyses
     
-    Analysis Modes (22 available):
+    Analysis Modes (\(analysisModes.count) available):
     """)
     
     for mode in analysisModes {
