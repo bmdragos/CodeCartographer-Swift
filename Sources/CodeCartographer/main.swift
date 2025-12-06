@@ -313,6 +313,7 @@ func main() {
     
     // Refactor detail mode: --refactor-detail FILE:START-END
     var refactorDetailTarget: (file: String, start: Int, end: Int)? = nil
+    var refactorDetailError: String? = nil
     if let detailIndex = args.firstIndex(of: "--refactor-detail"), detailIndex + 1 < args.count {
         let target = args[detailIndex + 1]
         // Parse FILE:START-END format
@@ -324,8 +325,19 @@ func main() {
                let start = Int(lineRange[0]),
                let end = Int(lineRange[1]) {
                 refactorDetailTarget = (file, start, end)
+            } else {
+                refactorDetailError = "Invalid line range. Use FILE:START-END (e.g., main.swift:100-200)"
             }
+        } else {
+            refactorDetailError = "Invalid format. Use FILE:START-END (e.g., main.swift:100-200)"
         }
+    } else if args.contains("--refactor-detail") {
+        refactorDetailError = "Missing target. Use --refactor-detail FILE:START-END"
+    }
+    
+    if let error = refactorDetailError {
+        fputs("❌ \(error)\n", stderr)
+        return
     }
     
     // Property tracking target
