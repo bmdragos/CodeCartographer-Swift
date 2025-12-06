@@ -71,9 +71,11 @@ final class AccessibilityVisitor: SyntaxVisitor {
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
         let callText = node.calledExpression.description.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // Check for UI element initialization
+        // Check for UI element initialization - must be the actual type name, not a substring
+        // e.g., "Text(" should match but "sourceText" should not
         for element in uiElements {
-            if callText.contains(element) {
+            // Check if it's a direct call like "Text(" or "UIButton("
+            if callText == element || callText.hasSuffix(".\(element)") {
                 uiElementCount += 1
                 break
             }
@@ -82,20 +84,22 @@ final class AccessibilityVisitor: SyntaxVisitor {
         return .visitChildren
     }
     
-    // Track accessibility API usage
+    // Track accessibility API usage - look for actual API calls like .accessibilityLabel
     override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
         let memberName = node.declName.baseName.text
         
-        // Skip single-letter variables (false positives)
-        guard memberName.count > 3 else { return .visitChildren }
+        // Must be an actual accessibility API, not a variable with "accessibility" in name
+        // Real APIs: accessibilityLabel, accessibilityHint, accessibilityValue, etc.
+        let actualAccessibilityAPIs = [
+            "accessibilityLabel", "accessibilityHint", "accessibilityValue",
+            "accessibilityIdentifier", "accessibilityTraits", "accessibilityFrame",
+            "isAccessibilityElement", "accessibilityElementsHidden",
+            "shouldGroupAccessibilityChildren", "accessibilityViewIsModal"
+        ]
         
-        for api in accessibilityAPIs {
-            let apiName = api.replacingOccurrences(of: ".", with: "")
-            if memberName.contains(apiName) || memberName.hasPrefix("accessibility") {
-                accessibilityUsage[memberName, default: 0] += 1
-                accessibilitySetCount += 1
-                break
-            }
+        if actualAccessibilityAPIs.contains(memberName) {
+            accessibilityUsage[memberName, default: 0] += 1
+            accessibilitySetCount += 1
         }
         
         return .visitChildren
