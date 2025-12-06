@@ -857,3 +857,221 @@ private func buildSingletonSummary(from files: [FileNode]) -> AnalysisSummary {
         hotspotFiles: Array(hotspots)
     )
 }
+
+// MARK: - Health Analysis
+
+struct FileHealth: Codable {
+    let analyzedAt: String
+    let file: String
+    let lineCount: Int
+    let smells: HealthSmellSummary
+    let functions: HealthFunctionSummary
+    let retainCycleRisk: Int
+    let refactoring: HealthRefactorSummary
+    let overallScore: Int
+}
+
+struct HealthSmellSummary: Codable {
+    let total: Int
+    let byType: [String: Int]
+}
+
+struct HealthFunctionSummary: Codable {
+    let total: Int
+    let godFunctions: Int
+    let averageComplexity: Double
+    let maxComplexity: Int
+}
+
+struct HealthRefactorSummary: Codable {
+    let godFunctionsToFix: Int
+    let extractionOpportunities: Int
+}
+
+func runHealthAnalysis(targetFile: String, files: [URL], rootURL: URL, verbose: Bool, outputFile: String?) -> Bool {
+    guard let fileURL = files.first(where: { $0.lastPathComponent == targetFile || $0.path.hasSuffix(targetFile) }) else {
+        fputs("❌ File not found: \(targetFile)\n", stderr)
+        return true
+    }
+    
+    if verbose {
+        fputs("🏥 Running health check for \(targetFile)...\n", stderr)
+    }
+    
+    let singleFile = [fileURL]
+    
+    let smellAnalyzer = CodeSmellAnalyzer()
+    let smellReport = smellAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+    
+    let metricsAnalyzer = FunctionMetricsAnalyzer()
+    let metricsReport = metricsAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+    
+    let retainAnalyzer = RetainCycleAnalyzer()
+    let retainReport = retainAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+    
+    let refactorAnalyzer = RefactoringAnalyzer()
+    let refactorReport = refactorAnalyzer.analyze(files: singleFile, relativeTo: rootURL)
+    
+    let lineCount = (try? String(contentsOf: fileURL))?.components(separatedBy: "\n").count ?? 0
+    
+    var score = 100
+    score -= min(30, smellReport.totalSmells * 2)
+    score -= min(30, metricsReport.godFunctions.count * 10)
+    score -= min(20, retainReport.riskScore / 5)
+    score -= min(20, Int(metricsReport.averageComplexity) - 5)
+    score = max(0, score)
+    
+    let maxComplexity = metricsReport.functions.map { $0.complexity }.max() ?? 0
+    
+    let health = FileHealth(
+        analyzedAt: ISO8601DateFormatter().string(from: Date()),
+        file: targetFile,
+        lineCount: lineCount,
+        smells: HealthSmellSummary(
+            total: smellReport.totalSmells,
+            byType: smellReport.smellsByType
+        ),
+        functions: HealthFunctionSummary(
+            total: metricsReport.totalFunctions,
+            godFunctions: metricsReport.godFunctions.count,
+            averageComplexity: metricsReport.averageComplexity,
+            maxComplexity: maxComplexity
+        ),
+        retainCycleRisk: retainReport.riskScore,
+        refactoring: HealthRefactorSummary(
+            godFunctionsToFix: refactorReport.godFunctions.count,
+            extractionOpportunities: refactorReport.extractionOpportunities.count
+        ),
+        overallScore: score
+    )
+    
+    if verbose {
+        fputs("   Lines: \(lineCount)\n", stderr)
+        fputs("   Smells: \(smellReport.totalSmells)\n", stderr)
+        fputs("   Functions: \(metricsReport.totalFunctions)\n", stderr)
+        fputs("   God functions: \(metricsReport.godFunctions.count)\n", stderr)
+        fputs("   Retain risk: \(retainReport.riskScore)/100\n", stderr)
+        fputs("   Overall score: \(score)/100\n", stderr)
+    }
+    
+    outputJSON(health, to: outputFile)
+    return true
+}
+
+// MARK: - Refactor Detail Analysis
+
+struct ExtractionDetail: Codable {
+    let file: String
+    let lineRange: String
+    let lineCount: Int
+    let fullCode: String
+    let variablesUsed: [String]
+    let functionsCalled: [String]
+    let typesReferenced: [String]
+    let suggestedSignature: String
+    let replacementCall: String
+    let generatedFunction: String
+}
+
+func runRefactorDetailAnalysis(target: (file: String, start: Int, end: Int), files: [URL], verbose: Bool, outputFile: String?) -> Bool {
+    guard let fileURL = files.first(where: { $0.lastPathComponent == target.file || $0.path.hasSuffix(target.file) }) else {
+        fputs("❌ File not found: \(target.file)\n", stderr)
+        return true
+    }
+    
+    guard let sourceText = try? String(contentsOf: fileURL) else {
+        fputs("❌ Could not read file: \(target.file)\n", stderr)
+        return true
+    }
+    
+    let lines = sourceText.components(separatedBy: "\n")
+    let startIdx = max(0, target.start - 1)
+    let endIdx = min(lines.count, target.end)
+    let blockLines = Array(lines[startIdx..<endIdx])
+    let blockCode = blockLines.joined(separator: "\n")
+    
+    var externalVars: Set<String> = []
+    var functionCalls: Set<String> = []
+    var typeRefs: Set<String> = []
+    
+    let varPattern = #"\b([a-z][a-zA-Z0-9]*)\b"#
+    let funcPattern = #"\b([a-zA-Z][a-zA-Z0-9]*)\s*\("#
+    let typePattern = #"\b([A-Z][a-zA-Z0-9]*)\b"#
+    
+    if let varRegex = try? NSRegularExpression(pattern: varPattern) {
+        let range = NSRange(blockCode.startIndex..., in: blockCode)
+        for match in varRegex.matches(in: blockCode, range: range) {
+            if let r = Range(match.range(at: 1), in: blockCode) {
+                externalVars.insert(String(blockCode[r]))
+            }
+        }
+    }
+    
+    if let funcRegex = try? NSRegularExpression(pattern: funcPattern) {
+        let range = NSRange(blockCode.startIndex..., in: blockCode)
+        for match in funcRegex.matches(in: blockCode, range: range) {
+            if let r = Range(match.range(at: 1), in: blockCode) {
+                functionCalls.insert(String(blockCode[r]))
+            }
+        }
+    }
+    
+    if let typeRegex = try? NSRegularExpression(pattern: typePattern) {
+        let range = NSRange(blockCode.startIndex..., in: blockCode)
+        for match in typeRegex.matches(in: blockCode, range: range) {
+            if let r = Range(match.range(at: 1), in: blockCode) {
+                typeRefs.insert(String(blockCode[r]))
+            }
+        }
+    }
+    
+    let keywords: Set<String> = ["if", "else", "let", "var", "for", "in", "return", "guard", "true", "false", "nil", "self"]
+    externalVars = externalVars.subtracting(keywords)
+    
+    let funcName = "extractedFunction"
+    let commonParams = ["ctx", "verbose", "rootURL", "rootPath", "swiftFiles", "outputFile", "runAll"]
+    let likelyParams = externalVars.filter { commonParams.contains($0) }.sorted()
+    
+    let paramList = likelyParams.map { param -> String in
+        switch param {
+        case "ctx": return "ctx: AnalysisContext"
+        case "verbose": return "verbose: Bool"
+        case "rootURL": return "rootURL: URL"
+        case "rootPath": return "rootPath: String"
+        case "swiftFiles": return "swiftFiles: [URL]"
+        case "outputFile": return "outputFile: String?"
+        case "runAll": return "runAll: Bool"
+        default: return "\(param): Any"
+        }
+    }
+    
+    let hasReturn = blockCode.contains("return")
+    let returnType = hasReturn ? " -> Bool" : ""
+    let signature = "func \(funcName)(\(paramList.joined(separator: ", ")))\(returnType)"
+    let indentedCode = blockLines.map { "    \($0)" }.joined(separator: "\n")
+    let generatedFunc = "\(signature) {\n\(indentedCode)\n}"
+    
+    let detail = ExtractionDetail(
+        file: target.file,
+        lineRange: "\(target.start)-\(target.end)",
+        lineCount: blockLines.count,
+        fullCode: blockCode,
+        variablesUsed: Array(externalVars).sorted(),
+        functionsCalled: Array(functionCalls).sorted(),
+        typesReferenced: Array(typeRefs).sorted(),
+        suggestedSignature: signature,
+        replacementCall: hasReturn ? "if \(funcName)(\(likelyParams.joined(separator: ", "))) { return }" : "\(funcName)(\(likelyParams.joined(separator: ", ")))",
+        generatedFunction: generatedFunc
+    )
+    
+    if verbose {
+        fputs("📋 Extraction detail for \(target.file):\(target.start)-\(target.end)\n", stderr)
+        fputs("   Lines: \(blockLines.count)\n", stderr)
+        fputs("   Variables: \(externalVars.count)\n", stderr)
+        fputs("   Function calls: \(functionCalls.count)\n", stderr)
+        fputs("   Types: \(typeRefs.count)\n", stderr)
+    }
+    
+    outputJSON(detail, to: outputFile)
+    return true
+}
