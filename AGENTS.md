@@ -33,7 +33,7 @@ CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis
 | `get_version` | Version info and current project status |
 | `set_project` | Switch to a different Swift project |
 | `get_summary` | Project health overview |
-| `get_architecture_diagram` | Mermaid.js architecture diagram |
+| `get_architecture_diagram` | Mermaid.js architecture diagram (see below) |
 | `analyze_file` | Single file health check |
 | `list_files` | List Swift files |
 | `read_source` | Read file contents |
@@ -176,6 +176,23 @@ All tools return compact JSON. Key fields:
 - Call every tool - use targeted analysis
 - Ignore cached results - they're still valid
 - Skip `check_impact` - blast radius matters
+
+### Displaying Diagrams
+
+When using `get_architecture_diagram`, output the `mermaid` field directly in a fenced code block:
+
+~~~
+```mermaid
+graph TD
+    UIViewController[UIViewController]
+    SplashViewController --> UIViewController
+```
+~~~
+
+- **DO**: Output raw mermaid in code blocks - IDEs render it natively
+- **DON'T**: Paste the `renderUrl` - it's 2KB+ of base64 and wastes tokens
+
+The `renderUrl` is only for CLI usage or external sharing.
 
 ## Error Handling
 
