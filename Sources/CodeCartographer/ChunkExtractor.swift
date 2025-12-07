@@ -4,7 +4,7 @@ import SwiftParser
 
 // MARK: - Code Chunk Model
 
-struct CodeChunk: Codable {
+public struct CodeChunk: Codable {
     // Identity
     let id: String                  // file:line hash
     let file: String                // relative path
@@ -103,7 +103,7 @@ struct CodeChunk: Codable {
         return parts.joined(separator: "\n")
     }
     
-    enum ChunkKind: String, Codable {
+    public enum ChunkKind: String, Codable {
         case function
         case method
         case initializer
@@ -115,7 +115,7 @@ struct CodeChunk: Codable {
         case `extension`
     }
     
-    enum Visibility: String, Codable {
+    public enum Visibility: String, Codable {
         case `public`
         case `internal`
         case `private`
@@ -162,60 +162,74 @@ class ChunkExtractor {
     }
     
     func extractChunks(from parsedFiles: [ParsedFile]) -> [CodeChunk] {
-        // Step 1: Pre-compute findings using existing visitors (with caching)
-        var findingsByFile: [String: FileFindings] = [:]
-        var cacheHits = 0
-        var cacheMisses = 0
+        let startTime = Date()
         
-        for file in parsedFiles {
-            // Check cache first
-            if let cachedFindings = cache?.getFindings(for: file) {
-                findingsByFile[file.relativePath] = cachedFindings
-                cacheHits += 1
-                continue
+        // Thread-safe collections for parallel processing
+        let lock = NSLock()
+        var findingsByFile: [String: FileFindings] = [:]
+        var allFileChunks: [[CodeChunk]] = Array(repeating: [], count: parsedFiles.count)
+        var findingsHits = 0
+        var findingsMisses = 0
+        var chunkHits = 0
+        var chunkMisses = 0
+        
+        // Step 1: Parallel extraction (findings + chunks per file)
+        DispatchQueue.concurrentPerform(iterations: parsedFiles.count) { index in
+            let file = parsedFiles[index]
+            
+            // Check chunk cache first (includes findings implicitly)
+            if let cachedChunks = cache?.getChunks(for: file) {
+                lock.lock()
+                allFileChunks[index] = cachedChunks
+                chunkHits += 1
+                lock.unlock()
+                return
             }
             
-            // Compute findings (cache miss)
-            cacheMisses += 1
-            var findings = FileFindings()
+            lock.lock()
+            chunkMisses += 1
+            lock.unlock()
             
-            // Singleton analysis (uses FileAnalyzer)
-            let singletonVisitor = FileAnalyzer(filePath: file.relativePath, sourceText: file.sourceText)
-            singletonVisitor.walk(file.ast)
-            findings.singletonLines = Set(singletonVisitor.references.compactMap { $0.line })
+            // Get or compute findings
+            var findings: FileFindings
+            if let cachedFindings = cache?.getFindings(for: file) {
+                lock.lock()
+                findingsHits += 1
+                lock.unlock()
+                findings = cachedFindings
+            } else {
+                lock.lock()
+                findingsMisses += 1
+                lock.unlock()
+                
+                findings = FileFindings()
+                
+                // Run all analyzers
+                let singletonVisitor = FileAnalyzer(filePath: file.relativePath, sourceText: file.sourceText)
+                singletonVisitor.walk(file.ast)
+                findings.singletonLines = Set(singletonVisitor.references.compactMap { $0.line })
+                
+                let reactiveVisitor = ReactiveVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+                reactiveVisitor.walk(file.ast)
+                findings.reactiveLines = Set(reactiveVisitor.subscriptions.compactMap { $0.line })
+                
+                let networkVisitor = NetworkVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+                networkVisitor.walk(file.ast)
+                findings.networkLines = Set(networkVisitor.endpoints.compactMap { $0.line })
+                
+                let delegateVisitor = DelegateWiringVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+                delegateVisitor.walk(file.ast)
+                findings.delegateLines = Set(delegateVisitor.wirings.compactMap { $0.line })
+                
+                cache?.cacheFindings(findings, for: file)
+            }
             
-            // Reactive analysis (RxSwift/Combine)
-            let reactiveVisitor = ReactiveVisitor(filePath: file.relativePath, sourceText: file.sourceText)
-            reactiveVisitor.walk(file.ast)
-            findings.reactiveLines = Set(reactiveVisitor.subscriptions.compactMap { $0.line })
-            
-            // Network analysis
-            let networkVisitor = NetworkVisitor(filePath: file.relativePath, sourceText: file.sourceText)
-            networkVisitor.walk(file.ast)
-            findings.networkLines = Set(networkVisitor.endpoints.compactMap { $0.line })
-            
-            // Delegate analysis
-            let delegateVisitor = DelegateWiringVisitor(filePath: file.relativePath, sourceText: file.sourceText)
-            delegateVisitor.walk(file.ast)
-            findings.delegateLines = Set(delegateVisitor.wirings.compactMap { $0.line })
-            
-            // Cache the findings
-            cache?.cacheFindings(findings, for: file)
+            lock.lock()
             findingsByFile[file.relativePath] = findings
-        }
-        
-        if verbose {
-            fputs("[ChunkExtractor] Findings cache: \(cacheHits) hits, \(cacheMisses) misses\n", stderr)
-        }
-        
-        // Step 2: Extract chunks with enriched patterns
-        var allChunks: [CodeChunk] = []
-        var callGraph: [String: Set<String>] = [:]
-        
-        for file in parsedFiles {
-            let imports = extractImports(from: file.ast)
-            let findings = findingsByFile[file.relativePath] ?? FileFindings()
+            lock.unlock()
             
+            // Extract chunks
+            let imports = extractImports(from: file.ast)
             let visitor = ChunkVisitor(
                 filePath: file.relativePath,
                 sourceText: file.sourceText,
@@ -223,13 +237,30 @@ class ChunkExtractor {
                 findings: findings
             )
             visitor.walk(file.ast)
-            allChunks.append(contentsOf: visitor.chunks)
             
-            // Collect call relationships
-            for chunk in visitor.chunks {
-                let callerId = "\(chunk.parentType ?? "").\(chunk.name)"
-                callGraph[callerId] = Set(chunk.calls)
-            }
+            // Cache chunks for this file
+            cache?.cacheChunks(visitor.chunks, for: file)
+            
+            lock.lock()
+            allFileChunks[index] = visitor.chunks
+            lock.unlock()
+        }
+        
+        // Flatten chunks
+        var allChunks = allFileChunks.flatMap { $0 }
+        
+        if verbose {
+            let elapsed = Date().timeIntervalSince(startTime)
+            fputs("[ChunkExtractor] Extracted \(allChunks.count) chunks in \(String(format: "%.2f", elapsed))s\n", stderr)
+            fputs("[ChunkExtractor] Chunk cache: \(chunkHits) hits, \(chunkMisses) misses\n", stderr)
+            fputs("[ChunkExtractor] Findings cache: \(findingsHits) hits, \(findingsMisses) misses\n", stderr)
+        }
+        
+        // Step 2: Build call graph (sequential, fast)
+        var callGraph: [String: Set<String>] = [:]
+        for chunk in allChunks {
+            let callerId = "\(chunk.parentType ?? "").\(chunk.name)"
+            callGraph[callerId] = Set(chunk.calls)
         }
         
         // Second pass: fill in "calledBy" relationships

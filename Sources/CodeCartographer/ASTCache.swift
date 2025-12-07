@@ -83,6 +83,16 @@ public final class ASTCache {
     private var findingsCache: [String: (hash: String, findings: FileFindings)] = [:]
     private let findingsLock = NSLock()
     
+    // Per-file chunks cache
+    // Key: relativePath, Value: (contentHash, chunks)
+    private var chunksCache: [String: (hash: String, chunks: [CodeChunk])] = [:]
+    private let chunksLock = NSLock()
+    
+    // Per-chunk embedding cache
+    // Key: chunk.id + contentHash, Value: embedding vector
+    private var embeddingCache: [String: [Float]] = [:]
+    private let embeddingLock = NSLock()
+    
     public init(rootURL: URL) {
         self.rootURL = rootURL
     }
@@ -295,6 +305,66 @@ public final class ASTCache {
         findingsLock.lock()
         defer { findingsLock.unlock() }
         findingsCache.removeAll()
+    }
+    
+    // MARK: - Per-File Chunks Cache
+    
+    /// Get cached chunks for a file
+    public func getChunks(for file: ParsedFile) -> [CodeChunk]? {
+        chunksLock.lock()
+        defer { chunksLock.unlock() }
+        
+        guard let cached = chunksCache[file.relativePath],
+              cached.hash == file.contentHash else {
+            return nil
+        }
+        return cached.chunks
+    }
+    
+    /// Cache chunks for a file
+    public func cacheChunks(_ chunks: [CodeChunk], for file: ParsedFile) {
+        chunksLock.lock()
+        defer { chunksLock.unlock() }
+        
+        chunksCache[file.relativePath] = (file.contentHash, chunks)
+    }
+    
+    // MARK: - Embedding Cache
+    
+    /// Get cached embedding for a chunk
+    public func getEmbedding(for chunkId: String, contentHash: String) -> [Float]? {
+        embeddingLock.lock()
+        defer { embeddingLock.unlock() }
+        
+        let key = "\(chunkId):\(contentHash)"
+        return embeddingCache[key]
+    }
+    
+    /// Cache embedding for a chunk
+    public func cacheEmbedding(_ embedding: [Float], for chunkId: String, contentHash: String) {
+        embeddingLock.lock()
+        defer { embeddingLock.unlock() }
+        
+        let key = "\(chunkId):\(contentHash)"
+        embeddingCache[key] = embedding
+    }
+    
+    /// Get embedding cache stats
+    public var embeddingCacheCount: Int {
+        embeddingLock.lock()
+        defer { embeddingLock.unlock() }
+        return embeddingCache.count
+    }
+    
+    /// Clear all chunk-related caches
+    public func invalidateChunkCaches() {
+        chunksLock.lock()
+        chunksCache.removeAll()
+        chunksLock.unlock()
+        
+        embeddingLock.lock()
+        embeddingCache.removeAll()
+        embeddingLock.unlock()
     }
     
     // MARK: - Parallel Parsing

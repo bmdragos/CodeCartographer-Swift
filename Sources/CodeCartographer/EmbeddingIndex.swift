@@ -5,31 +5,73 @@ import Foundation
 /// In-memory index for semantic search over code chunks
 final class EmbeddingIndex {
     let provider: EmbeddingProvider
+    let cache: ASTCache?
+    let verbose: Bool
     
     private var embeddings: [[Float]] = []
     private var chunkIds: [String] = []
     private var chunks: [String: CodeChunk] = [:]  // id -> chunk
+    private var fileHashes: [String: String] = [:]  // file -> contentHash (for cache key)
     
     var count: Int { embeddings.count }
     var isEmpty: Bool { embeddings.isEmpty }
     
-    init(provider: EmbeddingProvider) {
+    init(provider: EmbeddingProvider, cache: ASTCache? = nil, verbose: Bool = false) {
         self.provider = provider
+        self.cache = cache
+        self.verbose = verbose
+    }
+    
+    /// Set file hashes for embedding cache keys
+    func setFileHashes(_ hashes: [String: String]) {
+        self.fileHashes = hashes
     }
     
     // MARK: - Indexing
     
-    /// Index a batch of chunks
+    /// Index a batch of chunks with caching support
     func index(_ newChunks: [CodeChunk]) throws {
         guard !newChunks.isEmpty else { return }
         
-        // Get embedding texts
-        let texts = newChunks.map { $0.embeddingText }
+        var toEmbed: [(index: Int, chunk: CodeChunk)] = []
+        var cachedEmbeddings: [(index: Int, embedding: [Float])] = []
         
-        // Batch embed
-        let newEmbeddings = try provider.embed(texts)
+        // Check cache for each chunk
+        for (i, chunk) in newChunks.enumerated() {
+            let hash = fileHashes[chunk.file] ?? ""
+            if let cached = cache?.getEmbedding(for: chunk.id, contentHash: hash) {
+                cachedEmbeddings.append((i, cached))
+            } else {
+                toEmbed.append((i, chunk))
+            }
+        }
         
-        // Store
+        if verbose && !cachedEmbeddings.isEmpty {
+            fputs("[EmbeddingIndex] Embedding cache: \(cachedEmbeddings.count) hits, \(toEmbed.count) to embed\n", stderr)
+        }
+        
+        // Embed only uncached chunks
+        var newEmbeddings: [[Float]] = Array(repeating: [], count: newChunks.count)
+        
+        // Fill in cached
+        for (index, embedding) in cachedEmbeddings {
+            newEmbeddings[index] = embedding
+        }
+        
+        // Compute new embeddings
+        if !toEmbed.isEmpty {
+            let texts = toEmbed.map { $0.chunk.embeddingText }
+            let computed = try provider.embed(texts)
+            
+            for (i, (index, chunk)) in toEmbed.enumerated() {
+                newEmbeddings[index] = computed[i]
+                // Cache the new embedding
+                let hash = fileHashes[chunk.file] ?? ""
+                cache?.cacheEmbedding(computed[i], for: chunk.id, contentHash: hash)
+            }
+        }
+        
+        // Store all
         for (i, chunk) in newChunks.enumerated() {
             embeddings.append(newEmbeddings[i])
             chunkIds.append(chunk.id)

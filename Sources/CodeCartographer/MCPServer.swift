@@ -210,6 +210,12 @@ class MCPServer {
     private var embeddingIndex: EmbeddingIndex?
     private var embeddingProvider: EmbeddingProvider?
     
+    // Background indexing state
+    private var isIndexing = false
+    private var indexingProgress: (current: Int, total: Int) = (0, 0)
+    private var indexingError: String?
+    private let indexingLock = NSLock()
+    
     init(projectRoot: URL?, verbose: Bool = false) {
         // Start with provided project or current directory
         self.projectRoot = projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -246,7 +252,11 @@ class MCPServer {
             }
         }
         
-        return (true, "Switched to project: \(path) (\(fileCount) Swift files)")
+        // Clear old index and start background indexing
+        embeddingIndex = nil
+        startBackgroundIndexing()
+        
+        return (true, "Switched to project: \(path) (\(fileCount) Swift files). Background indexing started.")
     }
     
     /// Main server loop - reads from stdin, writes to stdout
@@ -1575,68 +1585,190 @@ class MCPServer {
         return result
     }
     
-    // MARK: - Semantic Search
+    // MARK: - Semantic Search (Background Indexing)
+    
+    /// Start background indexing with NLEmbedding (called automatically on project switch)
+    private func startBackgroundIndexing(providerName: String = "nlembedding", dgxEndpoint: String? = nil) {
+        indexingLock.lock()
+        // Don't start if already indexing
+        if isIndexing {
+            indexingLock.unlock()
+            return
+        }
+        isIndexing = true
+        indexingProgress = (0, 0)
+        indexingError = nil
+        indexingLock.unlock()
+        
+        if verbose { fputs("[MCP] Starting background indexing...\n", stderr) }
+        
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                // Create embedding provider
+                let provider: EmbeddingProvider
+                switch providerName.lowercased() {
+                case "nlembedding":
+                    provider = try NLEmbeddingProvider()
+                case "dgx":
+                    guard let endpoint = dgxEndpoint, let url = URL(string: endpoint) else {
+                        throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "DGX provider requires dgx_endpoint URL"])
+                    }
+                    provider = DGXEmbeddingProvider(endpoint: url)
+                default:
+                    provider = try NLEmbeddingProvider()
+                }
+                
+                self.embeddingProvider = provider
+                let newIndex = EmbeddingIndex(provider: provider, cache: self.cache, verbose: self.verbose)
+                
+                // Extract chunks
+                let parsedFiles = self.cache.parsedFiles
+                let extractor = ChunkExtractor(cache: self.cache, verbose: self.verbose)
+                let chunks = extractor.extractChunks(from: parsedFiles)
+                
+                // Build file hash map
+                var fileHashes: [String: String] = [:]
+                for file in parsedFiles {
+                    fileHashes[file.relativePath] = file.contentHash
+                }
+                newIndex.setFileHashes(fileHashes)
+                
+                // Update total
+                self.indexingLock.lock()
+                self.indexingProgress = (0, chunks.count)
+                self.indexingLock.unlock()
+                
+                if self.verbose { fputs("[MCP] Background indexing \(chunks.count) chunks...\n", stderr) }
+                
+                // Index in batches with progress updates
+                let batchSize = 500
+                for batchStart in stride(from: 0, to: chunks.count, by: batchSize) {
+                    let batchEnd = min(batchStart + batchSize, chunks.count)
+                    let batch = Array(chunks[batchStart..<batchEnd])
+                    try newIndex.index(batch)
+                    
+                    self.indexingLock.lock()
+                    self.indexingProgress = (batchEnd, chunks.count)
+                    self.indexingLock.unlock()
+                    
+                    if self.verbose { fputs("[MCP] Background indexed \(batchEnd)/\(chunks.count)\n", stderr) }
+                }
+                
+                // Done - set the index
+                self.embeddingIndex = newIndex
+                
+                self.indexingLock.lock()
+                self.isIndexing = false
+                self.indexingLock.unlock()
+                
+                if self.verbose { fputs("[MCP] Background indexing complete!\n", stderr) }
+                
+            } catch {
+                self.indexingLock.lock()
+                self.isIndexing = false
+                self.indexingError = error.localizedDescription
+                self.indexingLock.unlock()
+                
+                fputs("[MCP] Background indexing failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
+    }
+    
+    /// Get current indexing status
+    private func getIndexingStatus() -> (isIndexing: Bool, progress: (Int, Int), error: String?) {
+        indexingLock.lock()
+        defer { indexingLock.unlock() }
+        return (isIndexing, indexingProgress, indexingError)
+    }
     
     private func executeBuildSearchIndex(provider: String, dgxEndpoint: String?) throws -> String {
-        if verbose { fputs("[MCP] Building search index with provider: \(provider)\n", stderr) }
-        
-        // Create embedding provider
-        let embeddingProvider: EmbeddingProvider
-        switch provider.lowercased() {
-        case "nlembedding":
-            embeddingProvider = try NLEmbeddingProvider()
-        case "dgx":
-            guard let endpoint = dgxEndpoint, let url = URL(string: endpoint) else {
-                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "DGX provider requires dgx_endpoint URL"])
+        // Check if already indexing
+        let status = getIndexingStatus()
+        if status.isIndexing {
+            let percent = status.progress.1 > 0 ? Int(Double(status.progress.0) / Double(status.progress.1) * 100) : 0
+            struct IndexingReport: Codable {
+                let status: String
+                let progress: Int
+                let current: Int
+                let total: Int
+                let message: String
             }
-            embeddingProvider = DGXEmbeddingProvider(endpoint: url)
-        default:
-            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unknown provider: \(provider). Use 'nlembedding' or 'dgx'"])
+            let report = IndexingReport(
+                status: "indexing",
+                progress: percent,
+                current: status.progress.0,
+                total: status.progress.1,
+                message: "Indexing in progress (\(percent)%). Use semantic_search to check status."
+            )
+            return encodeToJSON(report)
         }
         
-        self.embeddingProvider = embeddingProvider
-        self.embeddingIndex = EmbeddingIndex(provider: embeddingProvider)
-        
-        // Extract all chunks (uses findings cache for speed)
-        let parsedFiles = cache.parsedFiles
-        let extractor = ChunkExtractor(cache: cache, verbose: verbose)
-        let chunks = extractor.extractChunks(from: parsedFiles)
-        
-        if verbose { fputs("[MCP] Indexing \(chunks.count) chunks...\n", stderr) }
-        
-        // Index in batches to show progress
-        let batchSize = 100
-        var indexed = 0
-        for batchStart in stride(from: 0, to: chunks.count, by: batchSize) {
-            let batchEnd = min(batchStart + batchSize, chunks.count)
-            let batch = Array(chunks[batchStart..<batchEnd])
-            try embeddingIndex?.index(batch)
-            indexed += batch.count
-            if verbose { fputs("[MCP] Indexed \(indexed)/\(chunks.count) chunks\n", stderr) }
+        // Check if already indexed
+        if let index = embeddingIndex, !index.isEmpty {
+            struct IndexReport: Codable {
+                let status: String
+                let chunksIndexed: Int
+                let message: String
+            }
+            let report = IndexReport(
+                status: "ready",
+                chunksIndexed: index.count,
+                message: "Index already built with \(index.count) chunks. Use semantic_search to query."
+            )
+            return encodeToJSON(report)
         }
+        
+        // Start background indexing
+        startBackgroundIndexing(providerName: provider, dgxEndpoint: dgxEndpoint)
         
         struct IndexReport: Codable {
             let status: String
-            let provider: String
-            let dimensions: Int
-            let chunksIndexed: Int
             let message: String
         }
-        
         let report = IndexReport(
-            status: "success",
-            provider: embeddingProvider.name,
-            dimensions: embeddingProvider.dimensions,
-            chunksIndexed: chunks.count,
-            message: "Index built successfully. Use semantic_search to query."
+            status: "started",
+            message: "Background indexing started. Use semantic_search to check status or query when ready."
         )
-        
         return encodeToJSON(report)
     }
     
     private func executeSemanticSearch(query: String, topK: Int) throws -> String {
+        // Check if indexing in progress
+        let status = getIndexingStatus()
+        if status.isIndexing {
+            let percent = status.progress.1 > 0 ? Int(Double(status.progress.0) / Double(status.progress.1) * 100) : 0
+            struct IndexingReport: Codable {
+                let status: String
+                let progress: Int
+                let message: String
+            }
+            let report = IndexingReport(
+                status: "indexing",
+                progress: percent,
+                message: "Index is being built (\(percent)% complete). Please wait and try again."
+            )
+            return encodeToJSON(report)
+        }
+        
+        // Check for indexing error
+        if let error = status.error {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Indexing failed: \(error). Call build_search_index to retry."])
+        }
+        
         guard let index = embeddingIndex, !index.isEmpty else {
-            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Search index not built. Call build_search_index first."])
+            // Start indexing if not started
+            startBackgroundIndexing()
+            struct IndexingReport: Codable {
+                let status: String
+                let message: String
+            }
+            let report = IndexingReport(
+                status: "indexing",
+                message: "Index not built. Background indexing started. Please wait and try again."
+            )
+            return encodeToJSON(report)
         }
         
         if verbose { fputs("[MCP] Searching for: \(query)\n", stderr) }
