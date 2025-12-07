@@ -203,8 +203,6 @@ AI: "I found the main() function has 797 lines. Here's an extraction..."
 - Swift 5.9+
 - macOS 13+
 
-> **Note:** Use debug build. Release build may crash on Xcode 16.x due to a Swift compiler bug.
-
 ## Contributing
 
 Contributions welcome! Ideas:

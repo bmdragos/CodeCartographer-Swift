@@ -18,6 +18,13 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftSyntax", package: "swift-syntax"),
                 .product(name: "SwiftParser", package: "swift-syntax")
+            ],
+            swiftSettings: [
+                // Workaround for Swift 6 / Xcode 16 CopyPropagation optimizer bug
+                // The optimizer incorrectly removes "live" objects causing crashes
+                .unsafeFlags([
+                    "-Xfrontend", "-enable-copy-propagation=false"
+                ], .when(configuration: .release))
             ]
         )
     ]
