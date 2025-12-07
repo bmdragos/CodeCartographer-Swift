@@ -45,8 +45,9 @@ struct CodeChunk: Codable {
     // Domain keywords (extracted from names, strings, comments)
     let keywords: [String]
     
-    // Architecture (inferred from imports and patterns)
-    let layer: String              // ui, network, persistence, reactive, business-logic
+    // Architecture
+    let layer: String              // ui, network, persistence, business-logic (from path/type)
+    let imports: [String]          // actual imports (reveals layer violations)
     let patterns: [String]         // async-await, callback, throws, delegate, singleton, rx-observable
     
     // The formatted text for embedding
@@ -85,6 +86,9 @@ struct CodeChunk: Codable {
         
         // Architecture
         parts.append("Layer: \(layer)")
+        if !imports.isEmpty {
+            parts.append("Uses: \(imports.joined(separator: ", "))")
+        }
         if !patterns.isEmpty {
             parts.append("Patterns: \(patterns.joined(separator: ", "))")
         }
@@ -241,6 +245,7 @@ class ChunkExtractor {
                 hasTodo: chunk.hasTodo,
                 keywords: chunk.keywords,
                 layer: chunk.layer,
+                imports: chunk.imports,
                 patterns: chunk.patterns
             )
         }
@@ -278,28 +283,50 @@ final class ChunkVisitor: SyntaxVisitor {
         self.filePath = filePath
         self.sourceText = sourceText
         self.imports = imports
-        self.layer = Self.inferLayer(from: imports)
         self.findings = findings
+        // Layer is inferred per-chunk based on path + type name (not imports)
+        self.layer = "business-logic"  // Default, will be overridden per chunk
         super.init(viewMode: .sourceAccurate)
     }
     
-    // MARK: - Layer Inference
+    /// Infer layer for a specific chunk (uses path + type name)
+    private func inferLayerForChunk(typeName: String?) -> String {
+        return Self.inferLayer(filePath: filePath, typeName: typeName)
+    }
     
-    private static func inferLayer(from imports: [String]) -> String {
-        let importText = imports.joined(separator: " ")
+    // MARK: - Layer Inference (path-based, not import-based)
+    
+    private static func inferLayer(filePath: String, typeName: String?) -> String {
+        let path = filePath.lowercased()
         
-        if importText.contains("UIKit") || importText.contains("SwiftUI") || importText.contains("AppKit") {
-            return "ui"
-        }
-        if importText.contains("Alamofire") || importText.contains("URLSession") || importText.contains("Network") {
+        // Priority 1: Path-based signals (strongest)
+        if path.contains("/network/") || path.contains("/api/") || path.contains("/service") {
             return "network"
         }
-        if importText.contains("CoreData") || importText.contains("Security") || importText.contains("KeychainAccess") {
+        if path.contains("/view/") || path.contains("/controller/") || path.contains("/ui/") {
+            return "ui"
+        }
+        if path.contains("/storage/") || path.contains("/persistence/") || path.contains("/cache/") || path.contains("/keychain") {
             return "persistence"
         }
-        if importText.contains("RxSwift") || importText.contains("Combine") || importText.contains("RxCocoa") {
-            return "reactive"
+        if path.contains("/model/") || path.contains("/entity/") || path.contains("/domain/") {
+            return "domain"
         }
+        
+        // Priority 2: Type name signals (medium)
+        if let name = typeName {
+            if name.hasSuffix("ViewController") || name.hasSuffix("View") || name.hasSuffix("Cell") {
+                return "ui"
+            }
+            if name.hasSuffix("Service") || name.hasSuffix("API") || name.contains("Network") {
+                return "network"
+            }
+            if name.hasSuffix("Storage") || name.hasSuffix("Repository") || name.contains("Keychain") {
+                return "persistence"
+            }
+        }
+        
+        // Default: business logic
         return "business-logic"
     }
     
@@ -513,7 +540,8 @@ final class ChunkVisitor: SyntaxVisitor {
             hasSmells: false,
             hasTodo: nodeText.contains("TODO") || nodeText.contains("FIXME"),
             keywords: keywords,
-            layer: layer,
+            layer: inferLayerForChunk(typeName: name),
+            imports: imports,
             patterns: isSingleton ? ["singleton"] : []
         )
     }
@@ -593,9 +621,9 @@ final class ChunkVisitor: SyntaxVisitor {
             returnType: returnType,
             docComment: docComment,
             purpose: nil,
-            calls: calls,
+            calls: Array(Set(calls)),  // Dedupe calls
             calledBy: [],
-            usesTypes: usesTypes,
+            usesTypes: Array(Set(usesTypes)),  // Dedupe types too
             conformsTo: [],
             complexity: complexity,
             lineCount: endLine - startLine + 1,
@@ -604,7 +632,8 @@ final class ChunkVisitor: SyntaxVisitor {
             hasSmells: hasSmells,
             hasTodo: bodyText.contains("TODO") || bodyText.contains("FIXME"),
             keywords: keywords,
-            layer: layer,
+            layer: inferLayerForChunk(typeName: currentType),
+            imports: imports,
             patterns: patterns
         )
     }
@@ -655,7 +684,8 @@ final class ChunkVisitor: SyntaxVisitor {
             hasSmells: false,
             hasTodo: false,
             keywords: extractKeywords(from: currentType ?? ""),
-            layer: layer,
+            layer: inferLayerForChunk(typeName: currentType),
+            imports: imports,
             patterns: patterns
         )
     }
