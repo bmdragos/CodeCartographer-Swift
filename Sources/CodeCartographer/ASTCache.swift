@@ -205,6 +205,40 @@ public final class ASTCache {
         return (files.count, parsed, files.count - parsed)
     }
     
+    // MARK: - Parallel Parsing
+    
+    /// Pre-parse all ASTs in parallel for faster first tool call
+    public func warmCache(verbose: Bool = false) {
+        let startTime = Date()
+        let filesToParse = parsedFiles.filter { !$0.isParsed }
+        
+        guard !filesToParse.isEmpty else {
+            if verbose {
+                fputs("[Cache] Already warm (\(files.count) files parsed)\n", stderr)
+            }
+            return
+        }
+        
+        // Parse in parallel using concurrent queue
+        let parseQueue = DispatchQueue(label: "com.codecartographer.parse", attributes: .concurrent)
+        let group = DispatchGroup()
+        
+        for file in filesToParse {
+            group.enter()
+            parseQueue.async {
+                _ = file.ast  // Trigger lazy parse
+                group.leave()
+            }
+        }
+        
+        group.wait()
+        
+        if verbose {
+            let elapsed = Date().timeIntervalSince(startTime)
+            fputs("[Cache] Warmed in \(String(format: "%.2f", elapsed))s: \(filesToParse.count) files parsed\n", stderr)
+        }
+    }
+    
     // MARK: - File Watching
     
     /// Start watching for file changes

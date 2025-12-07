@@ -223,6 +223,11 @@ class MCPServer {
         cache.verbose = verbose
         cache.scan(verbose: verbose)
         
+        // Pre-parse all ASTs in parallel for faster first tool call
+        // Note: For large projects (1000+ files), this takes a few seconds but makes
+        // subsequent tool calls much faster since all ASTs are already parsed
+        cache.warmCache(verbose: verbose)
+        
         // Start file watcher for auto-invalidation
         cache.startWatching()
         
@@ -761,17 +766,44 @@ class MCPServer {
     private func executeGetSummary() throws -> String {
         let parsedFiles = cache.parsedFiles  // Uses cached ASTs!
         
-        let smellAnalyzer = CodeSmellAnalyzer()
-        let smellReport = smellAnalyzer.analyze(parsedFiles: parsedFiles)
+        // Run analyzers in parallel for better performance
+        var smellReport: CodeSmellReport!
+        var metricsReport: FunctionMetricsReport!
+        var refactorReport: RefactoringReport!
+        var retainReport: RetainCycleReport!
         
-        let metricsAnalyzer = FunctionMetricsAnalyzer()
-        let metricsReport = metricsAnalyzer.analyze(parsedFiles: parsedFiles)
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "com.codecartographer.analysis", attributes: .concurrent)
         
-        let refactorAnalyzer = RefactoringAnalyzer()
-        let refactorReport = refactorAnalyzer.analyze(parsedFiles: parsedFiles)
+        group.enter()
+        queue.async {
+            let analyzer = CodeSmellAnalyzer()
+            smellReport = analyzer.analyze(parsedFiles: parsedFiles)
+            group.leave()
+        }
         
-        let retainAnalyzer = RetainCycleAnalyzer()
-        let retainReport = retainAnalyzer.analyze(parsedFiles: parsedFiles)
+        group.enter()
+        queue.async {
+            let analyzer = FunctionMetricsAnalyzer()
+            metricsReport = analyzer.analyze(parsedFiles: parsedFiles)
+            group.leave()
+        }
+        
+        group.enter()
+        queue.async {
+            let analyzer = RefactoringAnalyzer()
+            refactorReport = analyzer.analyze(parsedFiles: parsedFiles)
+            group.leave()
+        }
+        
+        group.enter()
+        queue.async {
+            let analyzer = RetainCycleAnalyzer()
+            retainReport = analyzer.analyze(parsedFiles: parsedFiles)
+            group.leave()
+        }
+        
+        group.wait()
         
         struct Summary: Codable {
             let analyzedAt: String
@@ -839,20 +871,42 @@ class MCPServer {
         }
         
         let singleFile = parsedFiles
-        
-        let smellAnalyzer = CodeSmellAnalyzer()
-        let smellReport = smellAnalyzer.analyze(parsedFiles: singleFile)
-        
-        let metricsAnalyzer = FunctionMetricsAnalyzer()
-        let metricsReport = metricsAnalyzer.analyze(parsedFiles: singleFile)
-        
-        let retainAnalyzer = RetainCycleAnalyzer()
-        let retainReport = retainAnalyzer.analyze(parsedFiles: singleFile)
-        
-        let refactorAnalyzer = RefactoringAnalyzer()
-        let refactorReport = refactorAnalyzer.analyze(parsedFiles: singleFile)
-        
         let lineCount = singleFile[0].sourceText.components(separatedBy: "\n").count
+        
+        // Run analyzers in parallel
+        var smellReport: CodeSmellReport!
+        var metricsReport: FunctionMetricsReport!
+        var retainReport: RetainCycleReport!
+        var refactorReport: RefactoringReport!
+        
+        let group = DispatchGroup()
+        let queue = DispatchQueue(label: "com.codecartographer.fileanalysis", attributes: .concurrent)
+        
+        group.enter()
+        queue.async {
+            smellReport = CodeSmellAnalyzer().analyze(parsedFiles: singleFile)
+            group.leave()
+        }
+        
+        group.enter()
+        queue.async {
+            metricsReport = FunctionMetricsAnalyzer().analyze(parsedFiles: singleFile)
+            group.leave()
+        }
+        
+        group.enter()
+        queue.async {
+            retainReport = RetainCycleAnalyzer().analyze(parsedFiles: singleFile)
+            group.leave()
+        }
+        
+        group.enter()
+        queue.async {
+            refactorReport = RefactoringAnalyzer().analyze(parsedFiles: singleFile)
+            group.leave()
+        }
+        
+        group.wait()
         
         var score = 100
         score -= min(30, smellReport.totalSmells * 2)
