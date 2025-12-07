@@ -327,6 +327,8 @@ final class FileWatcher {
         self.callback = callback
     }
     
+    private let queue = DispatchQueue(label: "com.codecartographer.filewatcher", qos: .utility)
+    
     func start() {
         let paths = [directory.path] as CFArray
         
@@ -369,7 +371,7 @@ final class FileWatcher {
         )
         
         if let stream = stream {
-            FSEventStreamScheduleWithRunLoop(stream, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            FSEventStreamSetDispatchQueue(stream, queue)
             FSEventStreamStart(stream)
         }
     }
