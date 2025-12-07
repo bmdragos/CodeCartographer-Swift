@@ -4,221 +4,42 @@
   <img src="codecartlogo.JPG" alt="CodeCartographer Logo" width="400">
 </p>
 
-**Swift Static Analyzer for AI-Assisted Refactoring**
+**Swift Static Analyzer for AI Coding Assistants**
 
-CodeCartographer is a powerful CLI tool that analyzes Swift codebases and outputs structured JSON reports. It's designed to provide rich context for AI coding assistants, enabling more informed refactoring decisions.
+CodeCartographer is an MCP server that gives AI assistants deep understanding of Swift codebases. It provides 35 analysis tools for code quality, refactoring, and migration planning.
 
 ## Quick Start
 
 ```bash
-# Install
+# Build
 git clone https://github.com/bmdragos/CodeCartographer-Swift.git
 cd CodeCartographer-Swift
 swift build
 
-# See all available modes
-.build/debug/codecart --list
-
-# Run an analysis
-.build/debug/codecart /path/to/project --smells --verbose
+# Install (optional)
+sudo ln -sf "$(pwd)/.build/debug/codecart" /usr/local/bin/codecart
 ```
 
-> **Note:** Use debug build for now. Release build may crash on Xcode 16.x/Swift 6.x beta due to a compiler optimization bug (CopyPropagation pass). This will be resolved when the toolchain stabilizes.
+## MCP Integration (Recommended)
 
-## Features
+CodeCartographer runs as an [MCP server](https://modelcontextprotocol.io/), enabling AI assistants to directly analyze your Swift code.
 
-CodeCartographer provides **30 analysis modes**:
+### Windsurf / Cursor
 
-| Mode | Flag | Description |
-|------|------|-------------|
-| Singletons | `--singletons` | Global state usage patterns |
-| Targets | `--targets-only` | Xcode target membership and orphaned files |
-| Auth Migration | `--auth-migration` | Authentication code tracking for migration |
-| Types | `--types` | Type definitions, protocols, inheritance |
-| Tech Debt | `--tech-debt` | TODO/FIXME/HACK markers |
-| Functions | `--functions` | Function metrics (length, complexity) |
-| Delegates | `--delegates` | Delegate wiring and potential issues |
-| Unused Code | `--unused` | Potentially dead code detection |
-| Network | `--network` | API endpoints and network patterns |
-| Reactive | `--reactive` | RxSwift/Combine subscriptions and leaks |
-| ViewControllers | `--viewcontrollers` | ViewController lifecycle audit |
-| Code Smells | `--smells` | Force unwraps, magic numbers, deep nesting |
-| Localization | `--localization` | Hardcoded strings and i18n coverage |
-| Accessibility | `--accessibility` | Accessibility API coverage audit |
-| Threading | `--threading` | Thread safety and concurrency patterns |
-| SwiftUI | `--swiftui` | SwiftUI patterns and state management |
-| UIKit | `--uikit` | UIKit patterns and modernization score |
-| Tests | `--tests` | Test coverage with target awareness |
-| Dependencies | `--deps` | CocoaPods/SPM/Carthage analysis |
-| Property Access | `--property TARGET` | Track all accesses to a specific pattern |
-| Impact Analysis | `--impact SYMBOL` | Analyze blast radius of changing a symbol |
-| Migration Checklist | `--checklist` | Generate phased migration plan |
-| Core Data | `--coredata` | Core Data model and fetch analysis |
-| Documentation | `--docs` | Documentation coverage audit |
-| Retain Cycles | `--retain-cycles` | Memory leak risk detection |
-| Refactoring | `--refactor` | God function extraction suggestions |
-| API Surface | `--api` | Public API surface analysis |
-| Summary | `--summary` | Compact AI-friendly overview |
-| Health | `--health FILE` | Unified health report for one file |
-| Refactor Detail | `--refactor-detail FILE:START-END` | Detailed extraction info for a code block |
-| All | `--all` | Run all analyses combined |
-
-## Installation
-
-### From Source
-
-```bash
-git clone https://github.com/bmdragos/CodeCartographer-Swift.git
-cd CodeCartographer-Swift
-swift build -c release
-```
-
-The binary will be at `.build/release/codecart`
-
-## Usage
-
-```bash
-# List all available analysis modes
-codecart --list
-
-# Run code smell analysis with verbose output
-codecart /path/to/project --smells --verbose
-
-# Analyze test coverage (auto-detects test targets)
-codecart /path/to/project --tests --verbose
-
-# Track property accesses for migration planning
-codecart /path/to/project --property "MyClass.shared" --verbose
-
-# Analyze impact of changing a symbol
-codecart /path/to/project --impact "AuthManager" --verbose
-
-# Save to file
-codecart /path/to/project --functions --output report.json
-
-# Include Xcode target analysis
-codecart /path/to/project --project "MyApp.xcodeproj" --targets-only --verbose
-
-# Run all analyses
-codecart /path/to/project --all --verbose
-
-# AI-friendly summary
-codecart /path/to/project --summary
-
-# Compare with baseline
-codecart /path/to/project --summary --output baseline.json
-# ... make changes ...
-codecart /path/to/project --summary --compare baseline.json
-
-# Get health score for a specific file
-codecart /path/to/project --health ViewController.swift
-
-# Get extraction details for refactoring
-codecart /path/to/project --refactor-detail "main.swift:100-150"
-```
-
-## Example Output
-
-### Singleton Analysis
-```
-🗺️  CodeCartographer analyzing: /path/to/project
-📁 Found 500 Swift files
-📊 Running singleton analysis...
-
-📈 Summary:
-   Total files analyzed: 500
-   Files with references: 320
-   Total references: 1500
-
-🔥 Top singletons:
-   450x AppState.shared
-   220x UserDefaults.standard
-   180x NetworkManager.shared
-```
-
-### Code Smells
-```
-🦨 Running code smell analysis...
-   Total smells: 1250
-
-🔍 Smells by type:
-     Magic Number: 520
-     Implicitly Unwrapped Optional: 340
-     Force Unwrap (!): 180
-     Deep Nesting: 120
-     Print Statement in Production: 90
-```
-
-### Function Metrics
-```
-📏 Running function metrics analysis...
-   Total functions: 2500
-   Average line count: 18.0
-   Average complexity: 3.2
-   God functions (>50 lines or complexity >10): 45
-
-⚠️ Top god functions:
-     parseConfiguration: 120 lines, complexity 25
-     processDataBatch: 95 lines, complexity 18
-```
-
-## JSON Output
-
-All analyses output structured JSON that can be consumed by AI assistants or other tools:
+Add to `~/.codeium/windsurf/mcp_config.json`:
 
 ```json
 {
-  "analyzedAt": "2025-12-06T14:04:42Z",
-  "fileCount": 500,
-  "summary": {
-    "totalReferences": 1500,
-    "singletonUsage": {
-      "AppState.shared": 450,
-      "UserDefaults.standard": 220
-    },
-    "hotspotFiles": ["AppState.swift", "MainViewController.swift"]
+  "mcpServers": {
+    "codecartographer": {
+      "command": "/usr/local/bin/codecart",
+      "args": ["serve"]
+    }
   }
 }
 ```
 
-## Use Cases
-
-### AI-Assisted Refactoring
-Feed CodeCartographer output to AI coding assistants to provide context about:
-- Global state dependencies before refactoring
-- Which files will be affected by changes
-- Technical debt priorities
-- Code quality metrics
-
-### Migration Planning
-- Track legacy authentication patterns for migration
-- Identify all network endpoints before API changes
-- Find RxSwift subscriptions before migrating to Combine
-
-### Code Quality Audits
-- Find force unwraps and other code smells
-- Measure localization coverage
-- Audit accessibility support
-- Identify god functions needing refactoring
-
-## MCP Server (AI Integration)
-
-CodeCartographer can run as an MCP (Model Context Protocol) server, enabling AI assistants like Claude, Cursor, and Windsurf to directly analyze your Swift codebase.
-
-### Start the Server
-
-```bash
-# From your project directory
-codecart serve .
-
-# Or specify a path
-codecart serve /path/to/swift/project
-
-# With verbose logging (for debugging)
-codecart serve /path/to/project --verbose
-```
-
-### Configure Claude Desktop
+### Claude Desktop
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -226,113 +47,168 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "codecartographer": {
-      "command": "/path/to/.build/debug/codecart",
-      "args": ["serve", "/path/to/your/project"]
-    }
-  }
-}
-```
-
-### Configure Cursor/Windsurf
-
-Add to your MCP settings:
-
-```json
-{
-  "mcpServers": {
-    "codecartographer": {
       "command": "codecart",
-      "args": ["serve", "."]
+      "args": ["serve", "/path/to/swift/project"]
     }
   }
 }
 ```
 
-### Available Tools (34 total)
+### Dynamic Project Switching
 
-**Project Analysis**
+The server can start without a project path. Use the `set_project` tool to switch between codebases:
+
+```
+AI: "Switch to the iOS project"
+→ set_project("/path/to/iOS")
+→ {"status": "switched", "fileCount": 1099}
+```
+
+## Available Tools (35)
+
+### Core Analysis
 | Tool | Description |
 |------|-------------|
-| `get_summary` | Quick project health overview |
-| `analyze_file` | Single file health check |
-| `list_files` | List Swift files |
-| `read_source` | Read file contents |
+| `get_summary` | Project health overview with top issues |
+| `analyze_file` | Deep health check for a single file |
+| `set_project` | Switch to a different Swift project |
 
-**Code Quality**
+### Code Quality
 | Tool | Description |
 |------|-------------|
 | `find_smells` | Force unwraps, magic numbers, deep nesting |
-| `find_god_functions` | Large/complex functions |
-| `find_retain_cycles` | Memory leak risks |
+| `find_god_functions` | Large/complex functions needing refactoring |
+| `find_retain_cycles` | Memory leak risk detection |
 | `find_unused_code` | Dead code detection |
 | `find_tech_debt` | TODO/FIXME/HACK markers |
 
-**Refactoring**
+### Refactoring
 | Tool | Description |
 |------|-------------|
-| `suggest_refactoring` | Extraction opportunities |
-| `get_refactor_detail` | Detailed extraction info for code block |
-| `check_impact` | Blast radius for symbol changes |
+| `suggest_refactoring` | Extraction opportunities for god functions |
+| `get_refactor_detail` | Copy-paste ready extracted function |
+| `check_impact` | Blast radius before modifying a symbol |
 
-**Architecture**
+### Architecture
 | Tool | Description |
 |------|-------------|
-| `find_types` | Types, protocols, inheritance |
+| `find_types` | Types, protocols, inheritance hierarchy |
 | `find_delegates` | Delegate wiring patterns |
-| `find_singletons` | Global state patterns |
+| `find_singletons` | Global state usage (.shared, .default) |
 | `analyze_api_surface` | Public API signatures |
 
-**Framework-Specific**
+### Framework-Specific
 | Tool | Description |
 |------|-------------|
-| `analyze_swiftui` | SwiftUI patterns and state |
-| `analyze_uikit` | UIKit patterns and modernization |
-| `find_viewcontrollers` | ViewController lifecycle |
-| `analyze_coredata` | Core Data usage |
+| `analyze_swiftui` | SwiftUI patterns and @State management |
+| `analyze_uikit` | UIKit patterns and modernization score |
+| `find_viewcontrollers` | ViewController lifecycle audit |
+| `analyze_coredata` | Core Data entities and fetch requests |
 | `find_reactive` | RxSwift/Combine subscriptions |
 
-**Migration & Dependencies**
+### Migration & Dependencies
 | Tool | Description |
 |------|-------------|
-| `track_property` | Find property accesses |
-| `find_calls` | Find method calls |
-| `analyze_auth_migration` | Auth code tracking |
+| `track_property` | Find all accesses to a property pattern |
+| `find_calls` | Find method call patterns |
+| `analyze_auth_migration` | Auth code tracking for migration |
 | `generate_migration_checklist` | Phased migration plan |
-| `analyze_dependencies` | CocoaPods/SPM/Carthage |
+| `analyze_dependencies` | CocoaPods/SPM/Carthage analysis |
 
-**Quality Audits**
+### Quality Audits
 | Tool | Description |
 |------|-------------|
-| `find_localization_issues` | i18n coverage |
-| `find_accessibility_issues` | Accessibility audit |
-| `find_threading_issues` | Thread safety |
+| `find_localization_issues` | Hardcoded strings and i18n coverage |
+| `find_accessibility_issues` | Accessibility API coverage |
+| `find_threading_issues` | Thread safety and concurrency |
 | `analyze_docs` | Documentation coverage |
-| `analyze_tests` | Test coverage |
-| `find_network_calls` | API endpoints |
+| `analyze_tests` | Test coverage with target awareness |
+| `find_network_calls` | API endpoints and network patterns |
 
-**Utilities**
+### Utilities
 | Tool | Description |
 |------|-------------|
-| `invalidate_cache` | Clear cached results |
-| `rescan_project` | Rescan for file changes |
+| `list_files` | List Swift files in project |
+| `read_source` | Read file contents with line range |
+| `invalidate_cache` | Clear cached analysis results |
+| `rescan_project` | Rescan for new/deleted files |
 
-### Performance
+## Performance
 
-The MCP server uses intelligent caching:
-- Files are hashed and only re-parsed when changed
-- Analysis results are cached per-file
-- ASTs are parsed lazily on first access
+The MCP server is optimized for AI agent workflows:
+
+- **Instant startup** - Background initialization, responds to MCP immediately
+- **AST caching** - Files parsed once, reused across tools
+- **Result caching** - 29 tools cache results for instant repeated queries
+- **File watching** - Auto-invalidates cache when files change
+- **Smart warmup** - Pre-parses large projects (50+ files) in background
+
+| Project Size | First Query | Cached Query |
+|--------------|-------------|--------------|
+| 30 files | ~0.5s | instant |
+| 300 files | ~2s | instant |
+| 1000+ files | ~5s | instant |
+
+## CLI Usage
+
+CodeCartographer also works as a standalone CLI:
+
+```bash
+# Quick summary
+codecart /path/to/project --summary
+
+# Code smells
+codecart /path/to/project --smells --verbose
+
+# All 30 analysis modes
+codecart --list
+
+# Save to file
+codecart /path/to/project --functions --output report.json
+```
+
+### Available CLI Modes
+
+| Mode | Flag | Description |
+|------|------|-------------|
+| Summary | `--summary` | AI-friendly health overview |
+| Health | `--health FILE` | Single file health report |
+| Smells | `--smells` | Code smell detection |
+| Functions | `--functions` | Function metrics |
+| Refactor | `--refactor` | God function extraction suggestions |
+| Types | `--types` | Type hierarchy analysis |
+| Singletons | `--singletons` | Global state patterns |
+| Tests | `--tests` | Test coverage analysis |
+| All | `--all` | Run all analyses |
+
+Run `codecart --list` for all 30 modes.
+
+## Example AI Workflow
+
+```
+User: "Help me refactor the main.swift file"
+
+AI uses CodeCartographer:
+1. get_summary → 49 god functions, 171 smells
+2. analyze_file("main.swift") → health score 35, 1 god function
+3. suggest_refactoring("main.swift") → 7 extraction opportunities
+4. check_impact("main") → affects 12 files
+5. get_refactor_detail("main.swift", 100, 200) → ready-to-use extracted function
+
+AI: "I found the main() function has 797 lines. Here's an extraction..."
+```
 
 ## Requirements
 
 - Swift 5.9+
-- macOS 13+ (uses SwiftSyntax 510)
+- macOS 13+
+
+> **Note:** Use debug build. Release build may crash on Xcode 16.x due to a Swift compiler bug.
 
 ## Contributing
 
-Contributions welcome! Some ideas:
-- Additional analyzers (SwiftUI patterns, Core Data usage, etc.)
-- Support for other languages (Kotlin, TypeScript)
+Contributions welcome! Ideas:
+- Additional analyzers
 - IDE integrations
 - Visualization tools
 

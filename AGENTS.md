@@ -1,277 +1,199 @@
 # CodeCartographer for AI Agents
 
-This guide helps AI coding assistants effectively use CodeCartographer to understand and refactor Swift codebases.
+CodeCartographer is an MCP server providing 35 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
 
-## MCP Server (Preferred for AI Agents)
+## Quick Reference
 
-If CodeCartographer is configured as an MCP server, you have direct access to **34 tools**:
+### Starting a Session
 
-### Core Workflow Tools
-| Tool | Use When |
-|------|----------|
-| `get_summary` | Starting analysis - get project health overview |
-| `analyze_file` | Deep-diving into a specific file |
-| `find_smells` | Looking for code quality issues |
-| `find_god_functions` | Finding functions that need refactoring |
-| `check_impact` | Before modifying a symbol - see blast radius |
-| `suggest_refactoring` | Getting extraction suggestions |
-| `get_refactor_detail` | Get copy-paste ready extracted function |
-| `track_property` | Finding all uses of a property (migration planning) |
-| `find_calls` | Finding method call patterns |
-| `read_source` | Reading specific code sections |
+```
+1. set_project("/path/to/swift/project")  → Switch to project
+2. get_summary                             → Project health overview
+3. Use specific tools based on task
+```
 
-### Architecture Analysis
-| Tool | Use When |
-|------|----------|
-| `find_types` | Understanding type hierarchy and protocols |
-| `find_delegates` | Analyzing delegate patterns |
-| `find_singletons` | Finding global state usage |
-| `analyze_api_surface` | Getting public API signatures |
+### Most Used Tools
 
-### Code Quality Tools
-| Tool | Use When |
-|------|----------|
-| `find_retain_cycles` | Checking for memory leaks |
-| `find_unused_code` | Finding dead code |
-| `find_tech_debt` | Finding TODO/FIXME markers |
-| `find_threading_issues` | Checking thread safety |
+| Tool | When to Use |
+|------|-------------|
+| `set_project` | Switch to a different codebase |
+| `get_summary` | First look at any project |
+| `analyze_file` | Deep-dive into a specific file |
+| `find_smells` | Find code quality issues |
+| `find_god_functions` | Find functions needing refactoring |
+| `check_impact` | Before modifying a symbol |
+| `suggest_refactoring` | Get extraction suggestions |
+| `read_source` | Read actual code |
+
+## All 35 Tools
+
+### Project Management
+| Tool | Description |
+|------|-------------|
+| `set_project` | Switch to a different Swift project |
+| `get_summary` | Project health overview |
+| `analyze_file` | Single file health check |
+| `list_files` | List Swift files |
+| `read_source` | Read file contents |
+| `invalidate_cache` | Clear cached results |
+| `rescan_project` | Detect new/deleted files |
+
+### Code Quality
+| Tool | Description |
+|------|-------------|
+| `find_smells` | Force unwraps, magic numbers, nesting |
+| `find_god_functions` | Large/complex functions |
+| `find_retain_cycles` | Memory leak risks |
+| `find_unused_code` | Dead code |
+| `find_tech_debt` | TODO/FIXME/HACK |
+| `find_threading_issues` | Thread safety |
+
+### Refactoring
+| Tool | Description |
+|------|-------------|
+| `suggest_refactoring` | Extraction opportunities |
+| `get_refactor_detail` | Ready-to-paste extracted function |
+| `check_impact` | Blast radius for symbol changes |
+| `track_property` | Find property accesses |
+| `find_calls` | Find method call patterns |
+
+### Architecture
+| Tool | Description |
+|------|-------------|
+| `find_types` | Types, protocols, inheritance |
+| `find_delegates` | Delegate wiring |
+| `find_singletons` | Global state (.shared, .default) |
+| `analyze_api_surface` | Public API signatures |
 
 ### Framework-Specific
-| Tool | Use When |
-|------|----------|
-| `analyze_swiftui` | Analyzing SwiftUI state management |
-| `analyze_uikit` | Getting UIKit modernization score |
-| `find_viewcontrollers` | Auditing VC lifecycle |
-| `analyze_coredata` | Checking Core Data usage |
-| `find_reactive` | Finding RxSwift/Combine issues |
-| `find_network_calls` | Mapping API endpoints |
+| Tool | Description |
+|------|-------------|
+| `analyze_swiftui` | @State, @Binding patterns |
+| `analyze_uikit` | UIKit modernization score |
+| `find_viewcontrollers` | VC lifecycle audit |
+| `analyze_coredata` | Core Data usage |
+| `find_reactive` | RxSwift/Combine subscriptions |
+| `find_network_calls` | API endpoints |
 
-### Migration & Quality Audits
-| Tool | Use When |
-|------|----------|
-| `analyze_auth_migration` | Planning auth migration |
-| `generate_migration_checklist` | Getting phased migration plan |
-| `analyze_dependencies` | Understanding CocoaPods/SPM deps |
-| `find_localization_issues` | Checking i18n coverage |
-| `find_accessibility_issues` | Auditing accessibility |
-| `analyze_docs` | Checking documentation coverage |
-| `analyze_tests` | Analyzing test coverage |
+### Migration & Quality
+| Tool | Description |
+|------|-------------|
+| `analyze_auth_migration` | Auth code tracking |
+| `generate_migration_checklist` | Phased migration plan |
+| `analyze_dependencies` | CocoaPods/SPM/Carthage |
+| `find_localization_issues` | i18n coverage |
+| `find_accessibility_issues` | Accessibility audit |
+| `analyze_docs` | Documentation coverage |
+| `analyze_tests` | Test coverage |
 
-### Utilities
-| Tool | Use When |
-|------|----------|
-| `list_files` | Listing Swift files |
-| `invalidate_cache` | Forcing re-analysis after changes |
-| `rescan_project` | Detecting new/deleted files |
+## Common Workflows
 
-**Workflow with MCP:**
-1. Call `get_summary` to understand project health
-2. Call `find_god_functions` to find refactoring targets
-3. Call `suggest_refactoring` with specific file path
-4. Call `read_source` to see the actual code
-5. Call `check_impact` before making changes
-6. Call `get_refactor_detail` to get copy-paste extraction code
+### Understanding a New Codebase
 
-## CLI Quick Reference
-
-```bash
-# Get overall codebase health (start here)
-codecart /path/to/project --summary
-
-# Get health score for a specific file
-codecart /path/to/project --health FileName.swift
-
-# Find refactoring opportunities
-codecart /path/to/project --refactor --verbose
-
-# Get extraction details for a specific block
-codecart /path/to/project --refactor-detail "FileName.swift:100-200"
+```
+1. set_project("/path/to/project")
+2. get_summary
+   → fileCount, godFunctions, totalSmells, topIssues
+3. find_types
+   → Type hierarchy and protocols
+4. find_singletons
+   → Global state patterns
 ```
 
-## Recommended Workflow
+### Refactoring a God Function
 
-### 1. Initial Assessment
-
-Start with `--summary` to get a compact overview:
-
-```bash
-codecart /path/to/project --summary
+```
+1. get_summary
+   → Identify god functions
+2. analyze_file("TargetFile.swift")
+   → Get file health score
+3. suggest_refactoring("TargetFile.swift")
+   → Get extraction opportunities
+4. check_impact("FunctionName")
+   → See what's affected
+5. get_refactor_detail("TargetFile.swift", 100, 200)
+   → Get ready-to-paste extracted function
 ```
 
-Output includes:
-- `fileCount` - Project size
-- `codeHealth.godFunctions` - Number of functions needing refactoring
-- `codeHealth.totalSmells` - Code quality issues
-- `refactoring.extractionOpportunities` - Suggested extractions
-- `topIssues` - Prioritized list of problems
+### Migration Planning
 
-### 2. Identify Problem Files
-
-If you need to focus on a specific file:
-
-```bash
-codecart /path/to/project --health TargetFile.swift
+```
+1. track_property("LegacyManager.*")
+   → Find all usages
+2. find_calls("*.deprecatedMethod")
+   → Find method calls to migrate
+3. check_impact("LegacyManager")
+   → Blast radius
+4. generate_migration_checklist
+   → Phased plan
 ```
 
-Output includes:
-- `overallScore` - 0-100 health score (higher is better)
-- `smells.byType` - Breakdown of code smells
-- `functions.godFunctions` - Large/complex functions in this file
-- `refactoring.extractionOpportunities` - Blocks to extract
+### Code Review
 
-### 3. Find Refactoring Targets
-
-```bash
-codecart /path/to/project --refactor --verbose
+```
+1. analyze_file("ChangedFile.swift")
+   → Health score
+2. find_smells("ChangedFile.swift")
+   → Quality issues
+3. find_retain_cycles("ChangedFile.swift")
+   → Memory leaks
+4. find_threading_issues("ChangedFile.swift")
+   → Concurrency problems
 ```
 
-Look for:
-- `godFunctions` - Functions with high line count and complexity
-- `extractableBlocks` - Suggested code blocks to extract
-- `blockId` - Stable identifier (survives line number changes)
-- `generatedSignature` - Ready-to-use function signature
+## Response Format
 
-### 4. Get Extraction Details
+All tools return compact JSON. Key fields:
 
-Once you identify a block to extract:
-
-```bash
-codecart /path/to/project --refactor-detail "FileName.swift:START-END"
+```json
+{
+  "fileCount": 33,
+  "godFunctions": 5,
+  "totalSmells": 171,
+  "topIssues": ["5 god functions need refactoring"],
+  "smellsByType": {"Force Unwrap": 10, "Magic Number": 50}
+}
 ```
 
-Output includes:
-- `fullCode` - The complete code block
-- `variablesUsed` - External variables the block depends on
-- `functionsCalled` - Functions called within the block
-- `generatedFunction` - Ready-to-paste extracted function
-- `replacementCall` - Code to replace the original block
+## Performance Notes
 
-### 5. Track Progress
+- **First query** may take 1-5s (parsing)
+- **Subsequent queries** are instant (cached)
+- **File changes** auto-invalidate cache
+- **set_project** clears cache and switches
 
-Save a baseline before refactoring:
-
-```bash
-codecart /path/to/project --summary --output /tmp/baseline.json
-```
-
-After changes, compare:
-
-```bash
-codecart /path/to/project --summary --compare /tmp/baseline.json --verbose
-```
-
-Shows:
-- `delta` - Change in metrics (negative = improvement)
-- `improved` - List of metrics that got better
-- `regressed` - List of metrics that got worse
-
-## Mode Selection Guide
-
-| Goal | Mode | When to Use |
-|------|------|-------------|
-| Quick overview | `--summary` | First look at any codebase |
-| File-specific issues | `--health FILE` | Deep dive into one file |
-| Find extraction targets | `--refactor` | Before refactoring god functions |
-| Get extraction code | `--refactor-detail` | When ready to extract a block |
-| Track changes | `--summary --compare` | After making changes |
-| Understand dependencies | `--types` | Before moving/renaming types |
-| Find global state | `--singletons` | Before decoupling |
-| Memory issues | `--retain-cycles` | Debugging memory leaks |
-| Test coverage | `--tests` | Before adding tests |
-| Track property access | `--property "Class.*"` | Find all usages of a class |
-| Find method calls | `--calls "*.methodName"` | Find SDK/library calls to migrate |
-| Impact of changes | `--impact "Symbol"` | Blast radius before refactoring |
-
-## JSON Output Patterns
-
-All modes output valid JSON to stdout. Use `--verbose` to get human-readable progress on stderr.
-
-### Piping to jq
-
-```bash
-# Get just the god functions
-codecart /path --refactor 2>/dev/null | jq '.godFunctions[:3]'
-
-# Get health score
-codecart /path --health File.swift 2>/dev/null | jq '.overallScore'
-
-# List all smells by type
-codecart /path --smells 2>/dev/null | jq '.smellsByType'
-```
-
-### Common Fields
-
-Most reports include:
-- `analyzedAt` - ISO8601 timestamp
-- `fileCount` or `totalFiles` - Number of files analyzed
-
-## Tips for AI Agents
+## Tips
 
 ### Do
-
-1. **Start broad, then narrow**: Use `--summary` first, then `--health` for specific files
-2. **Use stable identifiers**: The `blockId` field survives line number changes
-3. **Trust the generated code**: `generatedFunction` in `--refactor-detail` is ready to use
-4. **Track progress**: Save baselines and use `--compare` to verify improvements
-5. **Combine modes**: Run `--smells` and `--functions` together to correlate issues
+- Start with `get_summary` for any new project
+- Use `check_impact` before major changes
+- Trust `get_refactor_detail` output - it's ready to use
+- Use path filters to narrow scope: `find_smells("ViewController.swift")`
 
 ### Don't
-
-1. **Don't parse verbose output**: Always use JSON from stdout, not stderr
-2. **Don't assume line numbers are stable**: Use `blockId` for persistent references
-3. **Don't extract small blocks**: The tool already filters to blocks > 15 lines
-4. **Don't run `--all` for specific tasks**: It's verbose and slow; use targeted modes
+- Call every tool - use targeted analysis
+- Ignore cached results - they're still valid
+- Skip `check_impact` - blast radius matters
 
 ## Error Handling
 
-The tool returns exit code 0 on success. Errors go to stderr:
+Tools return errors in JSON:
 
-```bash
-codecart /nonexistent --summary 2>&1
-# ❌ Path does not exist: /nonexistent
+```json
+{"error": "File not found: NonExistent.swift"}
 ```
 
 Common errors:
-- `Path does not exist` - Invalid path
-- `File not found` - For `--health` or `--refactor-detail` with bad filename
-- `No Swift files found` - Empty or non-Swift directory
+- `File not found` - Bad path
+- `No Swift files` - Empty/non-Swift directory
+- `Ambiguous path` - Multiple files match
 
-## Performance
+## CLI Fallback
 
-| Project Size | `--summary` Time | `--all` Time |
-|--------------|------------------|--------------|
-| 30 files | ~0.5s | ~1.5s |
-| 300 files | ~2s | ~8s |
-| 1000+ files | ~5s | ~20s |
-
-Use targeted modes (`--smells`, `--functions`) for faster results on large projects.
-
-## Example: Refactoring a God Function
+If MCP isn't available, use CLI:
 
 ```bash
-# 1. Find the problem
-codecart /path --refactor --verbose 2>&1 | grep "god function"
-# main.swift:main - 850 lines, complexity 150
-
-# 2. Get the file health
-codecart /path --health main.swift 2>/dev/null | jq '{score: .overallScore, gods: .functions.godFunctions}'
-# {"score": 35, "gods": 1}
-
-# 3. Find extractable blocks
-codecart /path --refactor 2>/dev/null | jq '.godFunctions[0].extractableBlocks[:3] | .[].blockId'
-# "main.swift:main#runTestsAnalysis"
-# "main.swift:main#runDepsAnalysis"
-
-# 4. Get extraction details
-codecart /path --refactor-detail "main.swift:613-690" 2>/dev/null | jq '.generatedFunction'
-# "func runTestsAnalysis(ctx: AnalysisContext, ...) -> Bool { ... }"
-
-# 5. Apply the extraction, then verify
-codecart /path --summary --compare /tmp/baseline.json --verbose
-# ✅ Improved: God functions: 42 → 41 (-1)
+codecart /path/to/project --summary
+codecart /path/to/project --smells --verbose
+codecart /path/to/project --refactor-detail "File.swift:100-200"
 ```
-
-## Support
-
-- GitHub: https://github.com/bmdragos/CodeCartographer-Swift
-- Issues: Report bugs or request features via GitHub Issues

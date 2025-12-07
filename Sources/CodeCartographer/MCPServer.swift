@@ -252,27 +252,18 @@ class MCPServer {
             fputs("[MCP] Project root: \(projectRoot.path)\n", stderr)
         }
         
-        // Initial scan with AST caching
+        // Do ALL initialization in background so we can respond to MCP immediately
+        // This prevents "initialization timed out" errors from Windsurf
         cache.verbose = verbose
-        cache.scan(verbose: verbose)
-        
-        // Start file watcher for auto-invalidation
-        cache.startWatching()
-        
-        // Smart warmup: only pre-parse for projects with 50+ files
-        // For smaller projects, lazy parsing is fast enough
-        // For larger projects, warm in BACKGROUND so we can start responding immediately
-        let fileCount = cache.fileCount
-        if fileCount >= 50 {
-            // Background warmup - don't block startup!
-            DispatchQueue.global(qos: .userInitiated).async { [cache, verbose] in
+        DispatchQueue.global(qos: .userInitiated).async { [cache, verbose] in
+            cache.scan(verbose: verbose)
+            cache.startWatching()
+            
+            // Smart warmup for larger projects
+            let fileCount = cache.fileCount
+            if fileCount >= 50 {
                 cache.warmCache(verbose: verbose)
             }
-            if verbose {
-                fputs("[MCP] Warming cache in background (\(fileCount) files)...\n", stderr)
-            }
-        } else if verbose {
-            fputs("[MCP] Small project (\(fileCount) files) - using lazy parsing\n", stderr)
         }
         
         if verbose {
