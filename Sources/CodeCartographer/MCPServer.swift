@@ -834,15 +834,6 @@ class MCPServer {
     
     // MARK: - Tool Implementations
     
-    /// Ensure files are loaded before analysis (background scan may still be running)
-    /// Returns the parsed files for convenience
-    private func ensureFilesLoaded() -> [ParsedFile] {
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
-        }
-        return cache.parsedFiles
-    }
-    
     private func executeGetVersion() -> String {
         struct VersionInfo: Codable {
             let name: String
@@ -871,7 +862,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
         
         // Get type map
         let graphAnalyzer = DependencyGraphAnalyzer()
@@ -907,7 +898,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
         
         // Run analyzers in parallel for better performance
         var smellReport: CodeSmellReport!
@@ -1008,11 +999,6 @@ class MCPServer {
         if let cached = cache.getCachedResult(for: cacheKey) {
             if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
             return cached
-        }
-        
-        // Ensure scan completed
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
         }
         
         let parsedFiles = cache.getFiles(matching: path)
@@ -1126,7 +1112,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
         let analyzer = FunctionMetricsAnalyzer()
         var report = analyzer.analyze(parsedFiles: parsedFiles)
         
@@ -1147,7 +1133,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
         let analyzer = ImpactAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetSymbol: symbol)
         let result = encodeToJSON(report)
@@ -1177,7 +1163,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
         let analyzer = PropertyAccessAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetPattern: pattern)
         let result = encodeToJSON(report)
@@ -1192,7 +1178,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
         let analyzer = MethodCallAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, pattern: pattern)
         let result = encodeToJSON(report)
@@ -1201,11 +1187,6 @@ class MCPServer {
     }
     
     private func executeListFiles(path: String?) throws -> String {
-        // Ensure scan completed
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
-        }
-        
         var files = cache.fileURLs.map { 
             $0.path.replacingOccurrences(of: projectRoot.path + "/", with: "") 
         }
@@ -1223,11 +1204,6 @@ class MCPServer {
     }
     
     private func executeReadSource(path: String, startLine: Int?, endLine: Int?) throws -> String {
-        // Ensure scan completed
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
-        }
-        
         let matches = cache.fileURLs.filter {
             $0.lastPathComponent == path || $0.path.hasSuffix(path)
         }
@@ -1304,21 +1280,13 @@ class MCPServer {
     
     // MARK: - Additional Tool Implementations
     
-    /// Get ParsedFiles for analyzers that support AST caching
+    /// Get ParsedFiles for analyzers that support AST caching (auto-scans if needed)
     private func getParsedFiles(for path: String?) throws -> [ParsedFile] {
-        // Ensure scan completed before accessing files
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
-        }
         return cache.getFiles(matching: path)
     }
     
-    /// Get file URLs for analyzers that don't yet support AST caching
+    /// Get file URLs for analyzers that don't yet support AST caching (auto-scans if needed)
     private func getFiles(for path: String?) throws -> [URL] {
-        // Ensure scan completed before accessing files
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
-        }
         let parsedFiles = cache.getFiles(matching: path)
         guard !parsedFiles.isEmpty || path == nil else {
             throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path!)"])
@@ -1618,11 +1586,6 @@ class MCPServer {
     }
     
     private func executeGetRefactorDetail(file: String, startLine: Int, endLine: Int) throws -> String {
-        // Ensure scan completed
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
-        }
-        
         let matches = cache.fileURLs.filter {
             $0.lastPathComponent == file || $0.path.hasSuffix(file)
         }
@@ -1752,11 +1715,6 @@ class MCPServer {
         if let cached = cache.getCachedResult(for: cacheKey) {
             if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
             return cached
-        }
-        
-        // Ensure scan completed
-        if cache.fileCount == 0 {
-            cache.scan(verbose: verbose)
         }
         
         let authAnalyzer = AuthMigrationAnalyzer()

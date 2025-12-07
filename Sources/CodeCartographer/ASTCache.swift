@@ -63,6 +63,7 @@ public final class ASTCache {
     
     public let rootURL: URL
     public private(set) var lastScanTime: Date?
+    private var hasScanned = false  // Track if initial scan completed
     
     // File watching
     private var fileWatcher: FileWatcher?
@@ -80,25 +81,34 @@ public final class ASTCache {
         self.rootURL = rootURL
     }
     
+    /// Ensure initial scan has completed before accessing files
+    private func ensureScanned() {
+        if !hasScanned {
+            scan(verbose: verbose)
+        }
+    }
+    
     deinit {
         stopWatching()
     }
     
-    /// Get all cached file URLs
+    /// Get all cached file URLs (auto-scans if needed)
     public var fileURLs: [URL] {
+        ensureScanned()
         lock.lock()
         defer { lock.unlock() }
         return files.values.map { $0.url }
     }
     
-    /// Get all parsed files
+    /// Get all parsed files (auto-scans if needed)
     public var parsedFiles: [ParsedFile] {
+        ensureScanned()
         lock.lock()
         defer { lock.unlock() }
         return Array(files.values)
     }
     
-    /// Get file count
+    /// Get file count (does NOT auto-scan - used to check if scan needed)
     public var fileCount: Int {
         lock.lock()
         defer { lock.unlock() }
@@ -159,6 +169,7 @@ public final class ASTCache {
         }
         
         lastScanTime = Date()
+        hasScanned = true
         
         if verbose {
             let elapsed = Date().timeIntervalSince(startTime)
@@ -175,8 +186,9 @@ public final class ASTCache {
         return files[relativePath]
     }
     
-    /// Get files matching a path filter
+    /// Get files matching a path filter (auto-scans if needed)
     public func getFiles(matching filter: String?) -> [ParsedFile] {
+        ensureScanned()
         lock.lock()
         defer { lock.unlock() }
         
