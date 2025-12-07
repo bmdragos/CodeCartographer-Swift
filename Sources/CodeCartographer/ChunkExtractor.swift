@@ -120,23 +120,77 @@ struct CodeChunk: Codable {
     }
 }
 
+// MARK: - File Findings (from existing analyzers)
+
+struct FileFindings {
+    var singletonLines: Set<Int> = []
+    var reactiveLines: Set<Int> = []
+    var networkLines: Set<Int> = []
+    var delegateLines: Set<Int> = []
+    
+    func hasPattern(_ pattern: PatternType, inRange startLine: Int, endLine: Int) -> Bool {
+        let lines: Set<Int>
+        switch pattern {
+        case .singleton: lines = singletonLines
+        case .reactive: lines = reactiveLines
+        case .network: lines = networkLines
+        case .delegate: lines = delegateLines
+        }
+        return lines.contains { $0 >= startLine && $0 <= endLine }
+    }
+    
+    enum PatternType {
+        case singleton, reactive, network, delegate
+    }
+}
+
 // MARK: - Chunk Extractor
 
 class ChunkExtractor {
     
     func extractChunks(from parsedFiles: [ParsedFile]) -> [CodeChunk] {
-        var allChunks: [CodeChunk] = []
-        var callGraph: [String: Set<String>] = [:]  // caller -> callees
+        // Step 1: Pre-compute findings using existing visitors (reuses parsed ASTs)
+        var findingsByFile: [String: FileFindings] = [:]
         
-        // First pass: extract all chunks and build call graph
         for file in parsedFiles {
-            // Extract imports from the AST
+            var findings = FileFindings()
+            
+            // Singleton analysis (uses FileAnalyzer)
+            let singletonVisitor = FileAnalyzer(filePath: file.relativePath, sourceText: file.sourceText)
+            singletonVisitor.walk(file.ast)
+            findings.singletonLines = Set(singletonVisitor.references.compactMap { $0.line })
+            
+            // Reactive analysis (RxSwift/Combine)
+            let reactiveVisitor = ReactiveVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            reactiveVisitor.walk(file.ast)
+            findings.reactiveLines = Set(reactiveVisitor.subscriptions.compactMap { $0.line })
+            
+            // Network analysis
+            let networkVisitor = NetworkVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            networkVisitor.walk(file.ast)
+            findings.networkLines = Set(networkVisitor.endpoints.compactMap { $0.line })
+            
+            // Delegate analysis
+            let delegateVisitor = DelegateWiringVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+            delegateVisitor.walk(file.ast)
+            findings.delegateLines = Set(delegateVisitor.wirings.compactMap { $0.line })
+            
+            findingsByFile[file.relativePath] = findings
+        }
+        
+        // Step 2: Extract chunks with enriched patterns
+        var allChunks: [CodeChunk] = []
+        var callGraph: [String: Set<String>] = [:]
+        
+        for file in parsedFiles {
             let imports = extractImports(from: file.ast)
+            let findings = findingsByFile[file.relativePath] ?? FileFindings()
             
             let visitor = ChunkVisitor(
                 filePath: file.relativePath,
                 sourceText: file.sourceText,
-                imports: imports
+                imports: imports,
+                findings: findings
             )
             visitor.walk(file.ast)
             allChunks.append(contentsOf: visitor.chunks)
@@ -213,16 +267,19 @@ final class ChunkVisitor: SyntaxVisitor {
     let sourceText: String
     let imports: [String]
     let layer: String
+    let findings: FileFindings
+    
     private(set) var chunks: [CodeChunk] = []
     
     private var currentType: String?
     private var currentTypeKind: CodeChunk.ChunkKind?
     
-    init(filePath: String, sourceText: String, imports: [String]) {
+    init(filePath: String, sourceText: String, imports: [String], findings: FileFindings) {
         self.filePath = filePath
         self.sourceText = sourceText
         self.imports = imports
         self.layer = Self.inferLayer(from: imports)
+        self.findings = findings
         super.init(viewMode: .sourceAccurate)
     }
     
@@ -248,37 +305,42 @@ final class ChunkVisitor: SyntaxVisitor {
     
     // MARK: - Pattern Detection
     
-    private func detectPatterns(signature: String, bodyText: String, hasThrows: Bool) -> [String] {
+    private func detectPatterns(signature: String, bodyText: String, hasThrows: Bool, startLine: Int, endLine: Int) -> [String] {
         var patterns: [String] = []
         
-        // Async/await
+        // Async/await (from signature/body)
         if signature.contains("async") || bodyText.contains("await ") {
             patterns.append("async-await")
         }
         
-        // Throws
+        // Throws (from signature)
         if hasThrows {
             patterns.append("throws")
         }
         
-        // Callback pattern
+        // Callback pattern (from signature)
         if signature.contains("completion") || signature.contains("handler") || signature.contains("callback") {
             patterns.append("callback")
         }
         
-        // Delegate
-        if signature.contains("delegate") || bodyText.contains("delegate?.") || bodyText.contains("delegate.") {
+        // Delegate (from DelegateAnalyzer)
+        if findings.hasPattern(.delegate, inRange: startLine, endLine: endLine) {
             patterns.append("delegate")
         }
         
-        // RxSwift/Combine
-        if bodyText.contains("Observable") || bodyText.contains("subscribe") || bodyText.contains("Publisher") {
-            patterns.append("rx-observable")
+        // RxSwift/Combine (from ReactiveAnalyzer)
+        if findings.hasPattern(.reactive, inRange: startLine, endLine: endLine) {
+            patterns.append("reactive")
         }
         
-        // Singleton usage
-        if bodyText.contains(".shared") || bodyText.contains("sharedInstance") {
+        // Singleton usage (from FileAnalyzer/singleton analysis)
+        if findings.hasPattern(.singleton, inRange: startLine, endLine: endLine) {
             patterns.append("uses-singleton")
+        }
+        
+        // Network calls (from NetworkAnalyzer)
+        if findings.hasPattern(.network, inRange: startLine, endLine: endLine) {
+            patterns.append("network-call")
         }
         
         return patterns
@@ -507,10 +569,10 @@ final class ChunkVisitor: SyntaxVisitor {
         let hasSmells = bodyText.contains("!") && !bodyText.contains("!=")  // Force unwrap, not inequality
         
         // Check if function throws
-        let hasThrows = node.signature.effectSpecifiers?.throwsClause != nil
+        let hasThrows = node.signature.effectSpecifiers?.throwsSpecifier != nil
         
-        // Detect patterns
-        let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows)
+        // Detect patterns (using analyzer findings + signature analysis)
+        let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows, startLine: startLine, endLine: endLine)
         
         // Module path
         let modulePath = extractModulePath(from: filePath)
@@ -564,9 +626,9 @@ final class ChunkVisitor: SyntaxVisitor {
         let modulePath = extractModulePath(from: filePath)
         
         // Check if init throws
-        let hasThrows = node.signature.effectSpecifiers?.throwsClause != nil
+        let hasThrows = node.signature.effectSpecifiers?.throwsSpecifier != nil
         let bodyText = node.body?.description ?? ""
-        let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows)
+        let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows, startLine: startLine, endLine: endLine)
         
         return CodeChunk(
             id: "\(filePath):\(startLine)",
