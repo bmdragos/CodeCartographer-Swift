@@ -835,10 +835,12 @@ class MCPServer {
     // MARK: - Tool Implementations
     
     /// Ensure files are loaded before analysis (background scan may still be running)
-    private func ensureFilesLoaded() {
+    /// Returns the parsed files for convenience
+    private func ensureFilesLoaded() -> [ParsedFile] {
         if cache.fileCount == 0 {
             cache.scan(verbose: verbose)
         }
+        return cache.parsedFiles
     }
     
     private func executeGetVersion() -> String {
@@ -869,8 +871,7 @@ class MCPServer {
             return cached
         }
         
-        ensureFilesLoaded()
-        let parsedFiles = cache.parsedFiles
+        let parsedFiles = ensureFilesLoaded()
         
         // Get type map
         let graphAnalyzer = DependencyGraphAnalyzer()
@@ -906,8 +907,7 @@ class MCPServer {
             return cached
         }
         
-        ensureFilesLoaded()
-        let parsedFiles = cache.parsedFiles  // Uses cached ASTs!
+        let parsedFiles = ensureFilesLoaded()
         
         // Run analyzers in parallel for better performance
         var smellReport: CodeSmellReport!
@@ -1121,7 +1121,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = cache.parsedFiles
+        let parsedFiles = ensureFilesLoaded()
         let analyzer = FunctionMetricsAnalyzer()
         var report = analyzer.analyze(parsedFiles: parsedFiles)
         
@@ -1142,7 +1142,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = cache.parsedFiles
+        let parsedFiles = ensureFilesLoaded()
         let analyzer = ImpactAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetSymbol: symbol)
         let result = encodeToJSON(report)
@@ -1172,7 +1172,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = cache.parsedFiles
+        let parsedFiles = ensureFilesLoaded()
         let analyzer = PropertyAccessAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetPattern: pattern)
         let result = encodeToJSON(report)
@@ -1187,7 +1187,7 @@ class MCPServer {
             return cached
         }
         
-        let parsedFiles = cache.parsedFiles
+        let parsedFiles = ensureFilesLoaded()
         let analyzer = MethodCallAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, pattern: pattern)
         let result = encodeToJSON(report)
