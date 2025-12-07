@@ -220,7 +220,11 @@ class MCPServer {
         }
         
         // Initial scan with AST caching
+        cache.verbose = verbose
         cache.scan(verbose: verbose)
+        
+        // Start file watcher for auto-invalidation
+        cache.startWatching()
         
         if verbose {
             fputs("[MCP] Ready. Listening for JSON-RPC messages on stdin...\n", stderr)
@@ -231,6 +235,9 @@ class MCPServer {
             if line.isEmpty { continue }
             handleMessage(line)
         }
+        
+        // Clean up
+        cache.stopWatching()
         
         if verbose {
             fputs("[MCP] Server shutting down.\n", stderr)
