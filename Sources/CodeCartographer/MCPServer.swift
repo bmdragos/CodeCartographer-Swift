@@ -666,6 +666,17 @@ class MCPServer {
                 )
             ),
             MCPTool(
+                name: "similar_to",
+                description: "Find chunks similar to an existing search result. Pass the chunk ID from a previous search result to find related code.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "chunk_id": MCPProperty(type: "string", description: "The chunk ID from a previous search result (e.g., 'summary:Body Scan/Account/Auth/AuthManager.swift')"),
+                        "top_k": MCPProperty(type: "integer", description: "Optional: number of results to return (default: 10)")
+                    ],
+                    required: ["chunk_id"]
+                )
+            ),
+            MCPTool(
                 name: "analyze_swiftui",
                 description: "Analyze SwiftUI patterns and state management (@State, @Binding, etc.)",
                 inputSchema: MCPInputSchema(
@@ -900,6 +911,12 @@ class MCPServer {
             }
             let topK = arguments["top_k"]?.intValue ?? 10
             return try executeSemanticSearch(query: query, topK: topK)
+        case "similar_to":
+            guard let chunkId = arguments["chunk_id"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: chunk_id"])
+            }
+            let topK = arguments["top_k"]?.intValue ?? 10
+            return try executeSimilarTo(chunkId: chunkId, topK: topK)
         case "analyze_swiftui":
             let path = arguments["path"]?.stringValue
             return try executeAnalyzeSwiftUI(path: path)
@@ -1934,6 +1951,61 @@ class MCPServer {
         
         let report = SearchReport(
             query: query,
+            resultsCount: results.count,
+            results: items
+        )
+        
+        return encodeToJSON(report)
+    }
+    
+    private func executeSimilarTo(chunkId: String, topK: Int) throws -> String {
+        guard let index = embeddingIndex, !index.isEmpty else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Index not built. Call build_search_index first."])
+        }
+        
+        // Check if chunk exists
+        guard index.getChunk(chunkId) != nil else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Chunk not found: \(chunkId)"])
+        }
+        
+        if verbose { fputs("[MCP] Finding similar to: \(chunkId)\n", stderr) }
+        
+        let results = index.similarTo(chunkId: chunkId, topK: topK)
+        
+        struct SimilarReport: Codable {
+            let sourceChunkId: String
+            let resultsCount: Int
+            let results: [SearchResultItem]
+        }
+        
+        struct SearchResultItem: Codable {
+            let score: Float
+            let chunkId: String
+            let file: String
+            let line: Int
+            let name: String
+            let kind: String
+            let signature: String
+            let layer: String
+            let purpose: String?
+        }
+        
+        let items = results.map { result in
+            SearchResultItem(
+                score: result.score,
+                chunkId: result.chunk.id,
+                file: result.chunk.file,
+                line: result.chunk.line,
+                name: result.chunk.name,
+                kind: result.chunk.kind.rawValue,
+                signature: result.chunk.signature,
+                layer: result.chunk.layer,
+                purpose: result.chunk.purpose
+            )
+        }
+        
+        let report = SimilarReport(
+            sourceChunkId: chunkId,
             resultsCount: results.count,
             results: items
         )

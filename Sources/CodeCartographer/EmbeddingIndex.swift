@@ -132,6 +132,29 @@ final class EmbeddingIndex {
         }
     }
     
+    /// Find chunks similar to an existing chunk by its ID
+    func similarTo(chunkId: String, topK: Int = 10) -> [SearchResult] {
+        guard let index = chunkIds.firstIndex(of: chunkId) else { return [] }
+        let embedding = embeddings[index]
+        
+        // Search excluding self
+        return search(queryVector: embedding, topK: topK + 1)
+            .filter { $0.chunk.id != chunkId }
+            .prefix(topK)
+            .map { $0 }
+    }
+    
+    /// Get the embedding vector for a chunk
+    func getEmbedding(for chunkId: String) -> [Float]? {
+        guard let index = chunkIds.firstIndex(of: chunkId) else { return nil }
+        return embeddings[index]
+    }
+    
+    /// Get a chunk by ID
+    func getChunk(_ chunkId: String) -> CodeChunk? {
+        return chunks[chunkId]
+    }
+    
     // MARK: - Persistence
     
     /// Save index to disk

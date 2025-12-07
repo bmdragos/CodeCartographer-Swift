@@ -1,6 +1,6 @@
 # CodeCartographer for AI Agents
 
-CodeCartographer is an MCP server providing 39 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
+CodeCartographer is an MCP server providing 40 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
 
 ## Quick Reference
 
@@ -25,7 +25,7 @@ CodeCartographer is an MCP server providing 39 tools for Swift codebase analysis
 | `suggest_refactoring` | Get extraction suggestions |
 | `read_source` | Read actual code |
 
-## All 39 Tools
+## All 40 Tools
 
 ### Project Management
 | Tool | Description |
@@ -82,6 +82,7 @@ CodeCartographer is an MCP server providing 39 tools for Swift codebase analysis
 |------|-------------|
 | `build_search_index` | Build embedding index (local or DGX) |
 | `semantic_search` | Natural language code search |
+| `similar_to` | Find chunks similar to a search result |
 
 ### Migration & Quality
 | Tool | Description |
@@ -167,7 +168,12 @@ CodeCartographer is an MCP server providing 39 tools for Swift codebase analysis
    → Finds hotspot chunks (files with quality issues)
 ```
 
-**Hotspot chunks:** Files with god functions, 5+ smells, or singletons get special "hotspot" embeddings for quality-focused search.
+**Chunk types indexed:**
+- **Hotspots** - Files with god functions, 5+ smells, or singletons
+- **File summaries** - One chunk per file with aggregated metadata
+- **Clusters** - Groups of related files by module path
+
+**Query refinement:** Use `similar_to(chunk_id)` to find related code based on a previous search result.
 
 ## Response Format
 

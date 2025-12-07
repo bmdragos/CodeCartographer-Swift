@@ -124,6 +124,8 @@ public struct CodeChunk: Codable {
         case `protocol`
         case `extension`
         case hotspot  // File-level health/quality summary
+        case fileSummary  // File-level overview (all files)
+        case cluster  // Group of related files
     }
     
     public enum Visibility: String, Codable {
@@ -324,8 +326,16 @@ class ChunkExtractor {
         let hotspotChunks = generateHotspotChunks(from: allChunks, parsedFiles: parsedFiles)
         allChunks.append(contentsOf: hotspotChunks)
         
+        // Step 4: Generate file summary chunks (one per file)
+        let fileSummaryChunks = generateFileSummaryChunks(from: allChunks, parsedFiles: parsedFiles)
+        allChunks.append(contentsOf: fileSummaryChunks)
+        
+        // Step 5: Generate cluster chunks (groups of related files)
+        let clusterChunks = generateClusterChunks(from: allChunks)
+        allChunks.append(contentsOf: clusterChunks)
+        
         if verbose {
-            fputs("[ChunkExtractor] Added \(hotspotChunks.count) hotspot chunks\n", stderr)
+            fputs("[ChunkExtractor] Added \(hotspotChunks.count) hotspot, \(fileSummaryChunks.count) summary, \(clusterChunks.count) cluster chunks\n", stderr)
         }
         
         return allChunks
@@ -446,6 +456,173 @@ class ChunkExtractor {
         }
         
         return hotspots
+    }
+    
+    /// Generate file summary chunks for all files
+    private func generateFileSummaryChunks(from chunks: [CodeChunk], parsedFiles: [ParsedFile]) -> [CodeChunk] {
+        var summaries: [CodeChunk] = []
+        
+        // Group chunks by file
+        var chunksByFile: [String: [CodeChunk]] = [:]
+        for chunk in chunks where chunk.kind != .hotspot {
+            chunksByFile[chunk.file, default: []].append(chunk)
+        }
+        
+        for file in parsedFiles {
+            let fileChunks = chunksByFile[file.relativePath] ?? []
+            guard !fileChunks.isEmpty else { continue }
+            
+            // Aggregate metadata
+            let types = fileChunks.filter { [.class, .struct, .enum, .protocol].contains($0.kind) }
+            let methods = fileChunks.filter { $0.kind == .method || $0.kind == .function }
+            let publicAPIs = methods.filter { $0.visibility == .public || $0.visibility == .open }
+            let protocols = Set(fileChunks.flatMap { $0.conformsTo })
+            let allAttributes = Set(fileChunks.flatMap { $0.attributes })
+            let allPatterns = Set(fileChunks.flatMap { $0.patterns })
+            let totalLines = file.sourceText.components(separatedBy: .newlines).count
+            
+            // Build summary description
+            var parts: [String] = []
+            
+            // Types
+            if !types.isEmpty {
+                let typeNames = types.prefix(3).map { $0.name }
+                let typeDesc = types.count > 3 ? "\(typeNames.joined(separator: ", "))..." : typeNames.joined(separator: ", ")
+                parts.append("\(types.count) types: \(typeDesc)")
+            }
+            
+            // Methods
+            if !methods.isEmpty {
+                parts.append("\(methods.count) methods")
+            }
+            
+            // Public API
+            if !publicAPIs.isEmpty {
+                parts.append("\(publicAPIs.count) public")
+            }
+            
+            // Protocols
+            if !protocols.isEmpty {
+                let protoList = protocols.prefix(3).joined(separator: ", ")
+                parts.append("conforms to \(protoList)")
+            }
+            
+            // Key attributes
+            if allAttributes.contains("@MainActor") {
+                parts.append("@MainActor")
+            }
+            if allAttributes.contains("@Observable") || allPatterns.contains("reactive") {
+                parts.append("reactive")
+            }
+            
+            let modulePath = fileChunks.first?.modulePath ?? ""
+            let fileImports = fileChunks.first?.imports ?? []
+            let layer = fileChunks.first?.layer ?? "unknown"
+            
+            let summary = CodeChunk(
+                id: "summary:\(file.relativePath)",
+                file: file.relativePath,
+                line: 1,
+                endLine: totalLines,
+                name: (file.relativePath as NSString).lastPathComponent,
+                kind: .fileSummary,
+                parentType: nil,
+                modulePath: modulePath,
+                signature: file.relativePath,
+                parameters: [],
+                returnType: nil,
+                docComment: nil,
+                purpose: parts.joined(separator: ", "),
+                calls: [],
+                calledBy: [],
+                usesTypes: Array(Set(fileChunks.flatMap { $0.usesTypes })),
+                conformsTo: Array(protocols),
+                complexity: nil,
+                lineCount: totalLines,
+                visibility: .internal,
+                isSingleton: fileChunks.contains { $0.isSingleton },
+                hasSmells: fileChunks.contains { $0.hasSmells },
+                hasTodo: fileChunks.contains { $0.hasTodo },
+                attributes: Array(allAttributes),
+                propertyWrappers: [],
+                keywords: ["file", "summary", layer],
+                layer: layer,
+                imports: fileImports,
+                patterns: Array(allPatterns)
+            )
+            summaries.append(summary)
+        }
+        
+        return summaries
+    }
+    
+    /// Generate cluster chunks by grouping files with shared module paths
+    private func generateClusterChunks(from chunks: [CodeChunk]) -> [CodeChunk] {
+        var clusters: [CodeChunk] = []
+        
+        // Group files by module path (directory structure)
+        var filesByModule: [String: Set<String>] = [:]
+        for chunk in chunks where chunk.kind == .fileSummary {
+            let module = chunk.modulePath.isEmpty ? "Root" : chunk.modulePath
+            filesByModule[module, default: []].insert(chunk.file)
+        }
+        
+        // Only create clusters for modules with 2+ files
+        for (module, files) in filesByModule where files.count >= 2 {
+            let fileList = files.sorted()
+            
+            // Collect metadata from file summaries in this cluster
+            let summaryChunks = chunks.filter { $0.kind == .fileSummary && files.contains($0.file) }
+            let allImports = Set(summaryChunks.flatMap { $0.imports })
+            let allPatterns = Set(summaryChunks.flatMap { $0.patterns })
+            let allAttributes = Set(summaryChunks.flatMap { $0.attributes })
+            let primaryLayer = summaryChunks.first?.layer ?? "unknown"
+            
+            // Build cluster description
+            let fileNames = fileList.prefix(5).map { ($0 as NSString).lastPathComponent }
+            let fileDesc = fileList.count > 5 ? "\(fileNames.joined(separator: ", "))... (\(fileList.count) files)" : fileNames.joined(separator: ", ")
+            
+            let sharedImports = allImports.filter { imp in
+                // Only include imports shared by majority of files
+                let count = summaryChunks.filter { $0.imports.contains(imp) }.count
+                return count >= summaryChunks.count / 2
+            }
+            
+            let cluster = CodeChunk(
+                id: "cluster:\(module)",
+                file: module,
+                line: 1,
+                endLine: 1,
+                name: module,
+                kind: .cluster,
+                parentType: nil,
+                modulePath: module,
+                signature: "Cluster: \(module)",
+                parameters: [],
+                returnType: nil,
+                docComment: nil,
+                purpose: "\(fileList.count) files: \(fileDesc). Shared: \(sharedImports.prefix(5).joined(separator: ", "))",
+                calls: [],
+                calledBy: [],
+                usesTypes: [],
+                conformsTo: [],
+                complexity: nil,
+                lineCount: fileList.count,
+                visibility: .internal,
+                isSingleton: false,
+                hasSmells: false,
+                hasTodo: false,
+                attributes: Array(allAttributes),
+                propertyWrappers: [],
+                keywords: ["cluster", "module", primaryLayer],
+                layer: primaryLayer,
+                imports: Array(sharedImports),
+                patterns: Array(allPatterns)
+            )
+            clusters.append(cluster)
+        }
+        
+        return clusters
     }
     
     private func extractImports(from ast: SourceFileSyntax) -> [String] {
