@@ -242,7 +242,7 @@ final class CoreDataVisitor: SyntaxVisitor {
     // Detect member access patterns
     override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
         let memberName = node.declName.baseName.text
-        let fullExpr = node.description
+        _ = node.description  // fullExpr available for debugging
         
         if memberName == "viewContext" {
             patterns.mainContextUsage += 1

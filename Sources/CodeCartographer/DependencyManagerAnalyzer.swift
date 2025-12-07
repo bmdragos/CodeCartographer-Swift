@@ -294,7 +294,7 @@ class DependencyManagerAnalyzer {
             // git "url" "version"
             let parts = trimmed.components(separatedBy: " ")
             if parts.count >= 2 {
-                let source = parts[0]
+                // parts[0] is source type (github/git/binary)
                 let repo = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 let version = parts.count > 2 ? parts[2].trimmingCharacters(in: CharacterSet(charactersIn: "\"")) : nil
                 

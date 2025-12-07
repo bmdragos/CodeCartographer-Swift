@@ -512,7 +512,7 @@ func main() {
     
     // Delegate wiring analysis
     if delegatesMode || runAll {
-        var ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
+        let ctx = AnalysisContext(files: swiftFiles, rootURL: rootURL, rootPath: rootPath, verbose: verbose, outputFile: outputFile)
         // Note: runDelegatesAnalysis creates typeMap internally if not provided
         if runDelegatesAnalysis(ctx: ctx, isSpecificMode: delegatesMode, runAll: runAll) { return }
     }

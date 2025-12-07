@@ -179,7 +179,6 @@ class ImpactAnalyzer {
         
         // Calculate impact score
         let totalFiles = dependents.count
-        let totalUsages = dependents.map { $0.usageCount }.reduce(0, +)
         let hasInheritance = dependents.contains { $0.usageTypes.contains("inherits") }
         
         let impactScore: String

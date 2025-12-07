@@ -200,8 +200,8 @@ class UnusedCodeAnalyzer {
         }
         
         // Find unused imports (imports with low usage)
-        var unusedImports: [UnusedImport] = []
         // This is a heuristic - we can't perfectly detect unused imports without type resolution
+        let unusedImports: [UnusedImport] = []  // TODO: Implement import analysis
         
         let dateFormatter = ISO8601DateFormatter()
         
