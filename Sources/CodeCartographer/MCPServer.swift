@@ -223,13 +223,24 @@ class MCPServer {
         cache.verbose = verbose
         cache.scan(verbose: verbose)
         
-        // Pre-parse all ASTs in parallel for faster first tool call
-        // Note: For large projects (1000+ files), this takes a few seconds but makes
-        // subsequent tool calls much faster since all ASTs are already parsed
-        cache.warmCache(verbose: verbose)
-        
         // Start file watcher for auto-invalidation
         cache.startWatching()
+        
+        // Smart warmup: only pre-parse for projects with 50+ files
+        // For smaller projects, lazy parsing is fast enough
+        // For larger projects, warm in BACKGROUND so we can start responding immediately
+        let fileCount = cache.fileCount
+        if fileCount >= 50 {
+            // Background warmup - don't block startup!
+            DispatchQueue.global(qos: .userInitiated).async { [cache, verbose] in
+                cache.warmCache(verbose: verbose)
+            }
+            if verbose {
+                fputs("[MCP] Warming cache in background (\(fileCount) files)...\n", stderr)
+            }
+        } else if verbose {
+            fputs("[MCP] Small project (\(fileCount) files) - using lazy parsing\n", stderr)
+        }
         
         if verbose {
             fputs("[MCP] Ready. Listening for JSON-RPC messages on stdin...\n", stderr)
@@ -992,31 +1003,63 @@ class MCPServer {
     }
     
     private func executeCheckImpact(symbol: String) throws -> String {
+        let cacheKey = "check_impact:\(symbol)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = cache.parsedFiles
         let analyzer = ImpactAnalyzer()
-        let report = analyzer.analyze(parsedFiles: parsedFiles, targetSymbol: symbol)  // Uses cached ASTs
-        return encodeToJSON(report)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, targetSymbol: symbol)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeSuggestRefactoring(path: String?) throws -> String {
+        let cacheKey = "suggest_refactoring:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = RefactoringAnalyzer()
-        let report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
-        return encodeToJSON(report)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeTrackProperty(pattern: String) throws -> String {
+        let cacheKey = "track_property:\(pattern)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = cache.parsedFiles
         let analyzer = PropertyAccessAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetPattern: pattern)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindCalls(pattern: String) throws -> String {
+        let cacheKey = "find_calls:\(pattern)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = cache.parsedFiles
         let analyzer = MethodCallAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, pattern: pattern)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeListFiles(path: String?) throws -> String {
@@ -1128,89 +1171,185 @@ class MCPServer {
     }
     
     private func executeFindTypes(path: String?) throws -> String {
+        let cacheKey = "find_types:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = DependencyGraphAnalyzer()
         let report = analyzer.analyzeTypes(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindTechDebt(path: String?) throws -> String {
+        let cacheKey = "find_tech_debt:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = TechDebtAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindDelegates(path: String?) throws -> String {
+        let cacheKey = "find_delegates:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let depAnalyzer = DependencyGraphAnalyzer()
         let typeMap = depAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
         let analyzer = DelegateAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, typeMap: typeMap)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindUnusedCode(path: String?) throws -> String {
+        let cacheKey = "find_unused_code:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = UnusedCodeAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetFiles: nil)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindNetworkCalls(path: String?) throws -> String {
+        let cacheKey = "find_network_calls:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = NetworkAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindReactive(path: String?) throws -> String {
+        let cacheKey = "find_reactive:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ReactiveAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindViewControllers(path: String?) throws -> String {
+        let cacheKey = "find_viewcontrollers:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ViewControllerAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindLocalizationIssues(path: String?) throws -> String {
+        let cacheKey = "find_localization_issues:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = LocalizationAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindAccessibilityIssues(path: String?) throws -> String {
+        let cacheKey = "find_accessibility_issues:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = AccessibilityAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindThreadingIssues(path: String?) throws -> String {
+        let cacheKey = "find_threading_issues:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ThreadSafetyAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeSwiftUI(path: String?) throws -> String {
+        let cacheKey = "analyze_swiftui:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = SwiftUIAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeUIKit(path: String?) throws -> String {
+        let cacheKey = "analyze_uikit:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = UIKitAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeTests() throws -> String {
@@ -1229,24 +1368,48 @@ class MCPServer {
     }
     
     private func executeAnalyzeCoreData(path: String?) throws -> String {
+        let cacheKey = "analyze_coredata:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = CoreDataAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeDocs(path: String?) throws -> String {
+        let cacheKey = "analyze_docs:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = DocumentationAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindRetainCycles(path: String?) throws -> String {
+        let cacheKey = "find_retain_cycles:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = RetainCycleAnalyzer()
-        let report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
-        return encodeToJSON(report)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeGetRefactorDetail(file: String, startLine: Int, endLine: Int) throws -> String {
@@ -1424,7 +1587,9 @@ class MCPServer {
     
     private func encodeToJSON<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // Use compact JSON (no pretty printing) for faster transfer to AI agents
+        // sortedKeys helps with caching consistency
+        encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(value),
               let string = String(data: data, encoding: .utf8) else {
             return "{\"error\": \"encoding_failed\"}"
