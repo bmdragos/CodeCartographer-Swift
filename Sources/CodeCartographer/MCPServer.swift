@@ -578,6 +578,16 @@ class MCPServer {
                 )
             ),
             MCPTool(
+                name: "extract_chunks",
+                description: "Extract code chunks with rich metadata for semantic search. Returns embeddable text with context, relationships, and domain keywords.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Optional: specific file to extract chunks from"),
+                        "kind": MCPProperty(type: "string", description: "Optional: filter by kind (function, method, class, struct, enum, protocol)")
+                    ]
+                )
+            ),
+            MCPTool(
                 name: "analyze_swiftui",
                 description: "Analyze SwiftUI patterns and state management (@State, @Binding, etc.)",
                 inputSchema: MCPInputSchema(
@@ -795,6 +805,10 @@ class MCPServer {
         case "find_threading_issues":
             let path = arguments["path"]?.stringValue
             return try executeFindThreadingIssues(path: path)
+        case "extract_chunks":
+            let path = arguments["path"]?.stringValue
+            let kind = arguments["kind"]?.stringValue
+            return try executeExtractChunks(path: path, kind: kind)
         case "analyze_swiftui":
             let path = arguments["path"]?.stringValue
             return try executeAnalyzeSwiftUI(path: path)
@@ -1476,6 +1490,51 @@ class MCPServer {
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = ThreadSafetyAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
+    }
+    
+    private func executeExtractChunks(path: String?, kind: String?) throws -> String {
+        let cacheKey = "extract_chunks:\(path ?? "all"):\(kind ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
+        let parsedFiles = try getParsedFiles(for: path)
+        let extractor = ChunkExtractor()
+        var chunks = extractor.extractChunks(from: parsedFiles)
+        
+        // Filter by kind if specified
+        if let kindFilter = kind {
+            chunks = chunks.filter { $0.kind.rawValue == kindFilter }
+        }
+        
+        // Build response with both chunks and sample embedding texts
+        struct ChunkReport: Codable {
+            let totalChunks: Int
+            let byKind: [String: Int]
+            let chunks: [CodeChunk]
+            let sampleEmbeddingTexts: [String]
+        }
+        
+        // Count by kind
+        var byKind: [String: Int] = [:]
+        for chunk in chunks {
+            byKind[chunk.kind.rawValue, default: 0] += 1
+        }
+        
+        // Get sample embedding texts (first 5)
+        let samples = chunks.prefix(5).map { $0.embeddingText }
+        
+        let report = ChunkReport(
+            totalChunks: chunks.count,
+            byKind: byKind,
+            chunks: chunks,
+            sampleEmbeddingTexts: samples
+        )
+        
         let result = encodeToJSON(report)
         cache.cacheResult(result, for: cacheKey)
         return result
