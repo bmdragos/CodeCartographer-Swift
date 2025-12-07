@@ -70,6 +70,12 @@ public final class ASTCache {
     private var debounceWorkItem: DispatchWorkItem?
     public var verbose: Bool = false
     
+    // Result caching - stores tool results keyed by tool name
+    // Invalidated when any file changes
+    private var resultCache: [String: String] = [:]  // toolKey -> JSON result
+    private var resultCacheValid = false
+    private let resultLock = NSLock()
+    
     public init(rootURL: URL) {
         self.rootURL = rootURL
     }
@@ -205,9 +211,42 @@ public final class ASTCache {
         return (files.count, parsed, files.count - parsed)
     }
     
+    // MARK: - Result Caching
+    
+    /// Get cached result for a tool call
+    public func getCachedResult(for key: String) -> String? {
+        resultLock.lock()
+        defer { resultLock.unlock() }
+        
+        guard resultCacheValid else { return nil }
+        return resultCache[key]
+    }
+    
+    /// Cache a result for a tool call
+    public func cacheResult(_ result: String, for key: String) {
+        resultLock.lock()
+        defer { resultLock.unlock() }
+        
+        resultCache[key] = result
+        resultCacheValid = true
+    }
+    
+    /// Invalidate all cached results (called when files change)
+    public func invalidateResults() {
+        resultLock.lock()
+        defer { resultLock.unlock() }
+        
+        if !resultCache.isEmpty && verbose {
+            fputs("[Cache] Invalidated \(resultCache.count) cached results\n", stderr)
+        }
+        resultCache.removeAll()
+        resultCacheValid = false
+    }
+    
     // MARK: - Parallel Parsing
     
     /// Pre-parse all ASTs in parallel for faster first tool call
+    /// Uses batched processing to reduce thread overhead
     public func warmCache(verbose: Bool = false) {
         let startTime = Date()
         let filesToParse = parsedFiles.filter { !$0.isParsed }
@@ -219,14 +258,24 @@ public final class ASTCache {
             return
         }
         
-        // Parse in parallel using concurrent queue
+        // Batch files for parallel processing to reduce thread overhead
+        // Use ~2x CPU cores worth of batches for good parallelism
+        let coreCount = ProcessInfo.processInfo.activeProcessorCount
+        let batchSize = max(10, filesToParse.count / (coreCount * 2))
+        let batches = stride(from: 0, to: filesToParse.count, by: batchSize).map {
+            Array(filesToParse[$0..<min($0 + batchSize, filesToParse.count)])
+        }
+        
         let parseQueue = DispatchQueue(label: "com.codecartographer.parse", attributes: .concurrent)
         let group = DispatchGroup()
         
-        for file in filesToParse {
+        // Process batches in parallel, files within batch sequentially
+        for batch in batches {
             group.enter()
             parseQueue.async {
-                _ = file.ast  // Trigger lazy parse
+                for file in batch {
+                    _ = file.ast  // Trigger lazy parse
+                }
                 group.leave()
             }
         }
@@ -235,7 +284,7 @@ public final class ASTCache {
         
         if verbose {
             let elapsed = Date().timeIntervalSince(startTime)
-            fputs("[Cache] Warmed in \(String(format: "%.2f", elapsed))s: \(filesToParse.count) files parsed\n", stderr)
+            fputs("[Cache] Warmed in \(String(format: "%.2f", elapsed))s: \(filesToParse.count) files in \(batches.count) batches\n", stderr)
         }
     }
     
@@ -303,6 +352,9 @@ public final class ASTCache {
         lock.unlock()
         
         guard !paths.isEmpty else { return }
+        
+        // Invalidate cached results since files changed
+        invalidateResults()
         
         for relativePath in paths {
             let url = rootURL.appendingPathComponent(relativePath)

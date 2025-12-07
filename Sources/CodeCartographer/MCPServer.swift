@@ -764,6 +764,13 @@ class MCPServer {
     // MARK: - Tool Implementations
     
     private func executeGetSummary() throws -> String {
+        // Check result cache first
+        let cacheKey = "get_summary"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = cache.parsedFiles  // Uses cached ASTs!
         
         // Run analyzers in parallel for better performance
@@ -855,7 +862,9 @@ class MCPServer {
             topIssues: issues
         )
         
-        return encodeToJSON(summary)
+        let result = encodeToJSON(summary)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeFile(path: String) throws -> String {
@@ -945,23 +954,41 @@ class MCPServer {
     }
     
     private func executeFindSmells(path: String?) throws -> String {
+        // Check result cache
+        let cacheKey = "find_smells:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = try getParsedFiles(for: path)
         let analyzer = CodeSmellAnalyzer()
-        let report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
-        return encodeToJSON(report)
+        let report = analyzer.analyze(parsedFiles: parsedFiles)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindGodFunctions(minLines: Int, minComplexity: Int) throws -> String {
+        // Check result cache
+        let cacheKey = "find_god_functions:\(minLines):\(minComplexity)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = cache.parsedFiles
         let analyzer = FunctionMetricsAnalyzer()
-        var report = analyzer.analyze(parsedFiles: parsedFiles)  // Uses cached ASTs
+        var report = analyzer.analyze(parsedFiles: parsedFiles)
         
         // Filter by custom thresholds
         report.godFunctions = report.godFunctions.filter {
             $0.lineCount >= minLines || $0.complexity >= minComplexity
         }
         
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeCheckImpact(symbol: String) throws -> String {
