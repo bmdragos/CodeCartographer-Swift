@@ -97,8 +97,12 @@ class MermaidGenerator {
         }
         
         let mermaidCode = lines.joined(separator: "\n")
-        let encodedCode = mermaidCode.data(using: .utf8)?.base64EncodedString() ?? ""
-        let renderUrl = "https://mermaid.live/edit#base64:\(encodedCode)"
+        
+        // Mermaid.live expects a JSON state object
+        let state = ["code": mermaidCode, "mermaid": "{}", "autoSync": true, "updateDiagram": true] as [String : Any]
+        let stateJson = (try? JSONSerialization.data(withJSONObject: state)) ?? Data()
+        let encodedState = stateJson.base64EncodedString()
+        let renderUrl = "https://mermaid.live/edit#base64:\(encodedState)"
         
         return MermaidDiagram(
             type: diagramType.rawValue,
@@ -328,8 +332,12 @@ extension MermaidGenerator {
         }
         
         let mermaidCode = lines.joined(separator: "\n")
-        let encodedCode = mermaidCode.data(using: .utf8)?.base64EncodedString() ?? ""
-        let renderUrl = "https://mermaid.live/edit#base64:\(encodedCode)"
+        
+        // Mermaid.live expects a JSON state object
+        let state = ["code": mermaidCode, "mermaid": "{}", "autoSync": true, "updateDiagram": true] as [String : Any]
+        let stateJson = (try? JSONSerialization.data(withJSONObject: state)) ?? Data()
+        let encodedState = stateJson.base64EncodedString()
+        let renderUrl = "https://mermaid.live/edit#base64:\(encodedState)"
         
         return MermaidDiagram(
             type: "singletons",
