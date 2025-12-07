@@ -178,7 +178,12 @@ final class PropertyAccessVisitor: SyntaxVisitor {
 
 class PropertyAccessAnalyzer {
     
-    func analyze(parsedFiles: [ParsedFile], targetPattern: String) -> PropertyAccessReport {
+    /// Analyze property accesses matching a pattern
+    /// - Parameters:
+    ///   - parsedFiles: Files to analyze
+    ///   - targetPattern: Pattern like "Account.*" or "Manager.shared"
+    ///   - filterProperty: Optional - only include accesses to this specific property (e.g., "tokens", "email")
+    func analyze(parsedFiles: [ParsedFile], targetPattern: String, filterProperty: String? = nil) -> PropertyAccessReport {
         var allAccesses: [String: [PropertyAccess]] = [:]
         var accessesByFile: [String: [PropertyAccess]] = [:]
         
@@ -190,13 +195,49 @@ class PropertyAccessAnalyzer {
             )
             visitor.walk(file.ast)
             
-            // Merge accesses
+            // Merge accesses (with optional property filter)
             for (prop, propAccesses) in visitor.accesses {
+                // Filter by property name if specified
+                if let filter = filterProperty {
+                    // Support wildcards in filter: "token*" matches "tokens", "tokenModel", etc.
+                    let matches: Bool
+                    if filter.hasSuffix("*") {
+                        let prefix = String(filter.dropLast())
+                        matches = prop.lowercased().hasPrefix(prefix.lowercased())
+                    } else if filter.hasPrefix("*") {
+                        let suffix = String(filter.dropFirst())
+                        matches = prop.lowercased().hasSuffix(suffix.lowercased())
+                    } else {
+                        matches = prop.lowercased() == filter.lowercased()
+                    }
+                    
+                    if !matches { continue }
+                }
+                
                 allAccesses[prop, default: []].append(contentsOf: propAccesses)
             }
             
-            // Track by file
-            let fileAccesses = visitor.accesses.values.flatMap { $0 }
+            // Track by file (with filter applied)
+            var fileAccesses: [PropertyAccess] = []
+            for (prop, propAccesses) in visitor.accesses {
+                if let filter = filterProperty {
+                    let matches: Bool
+                    if filter.hasSuffix("*") {
+                        let prefix = String(filter.dropLast())
+                        matches = prop.lowercased().hasPrefix(prefix.lowercased())
+                    } else if filter.hasPrefix("*") {
+                        let suffix = String(filter.dropFirst())
+                        matches = prop.lowercased().hasSuffix(suffix.lowercased())
+                    } else {
+                        matches = prop.lowercased() == filter.lowercased()
+                    }
+                    if matches {
+                        fileAccesses.append(contentsOf: propAccesses)
+                    }
+                } else {
+                    fileAccesses.append(contentsOf: propAccesses)
+                }
+            }
             if !fileAccesses.isEmpty {
                 accessesByFile[file.relativePath] = fileAccesses
             }
@@ -221,18 +262,19 @@ class PropertyAccessAnalyzer {
         }
         
         let dateFormatter = ISO8601DateFormatter()
+        let reportType = filterProperty != nil ? "\(targetPattern) → \(filterProperty!)" : targetPattern
         
         return PropertyAccessReport(
             analyzedAt: dateFormatter.string(from: Date()),
-            targetType: targetPattern,
+            targetType: reportType,
             totalAccesses: allAccesses.values.flatMap { $0 }.count,
             properties: properties.sorted { $0.readCount + $0.writeCount + $0.callCount > $1.readCount + $1.writeCount + $1.callCount },
             accessesByFile: accessesByFile
         )
     }
     
-    func analyze(files: [URL], relativeTo root: URL, targetPattern: String) -> PropertyAccessReport {
+    func analyze(files: [URL], relativeTo root: URL, targetPattern: String, filterProperty: String? = nil) -> PropertyAccessReport {
         let parsedFiles = files.compactMap { try? ParsedFile(url: $0, relativeTo: root) }
-        return analyze(parsedFiles: parsedFiles, targetPattern: targetPattern)
+        return analyze(parsedFiles: parsedFiles, targetPattern: targetPattern, filterProperty: filterProperty)
     }
 }

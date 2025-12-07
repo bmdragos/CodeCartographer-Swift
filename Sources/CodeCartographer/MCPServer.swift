@@ -413,10 +413,11 @@ class MCPServer {
             ),
             MCPTool(
                 name: "track_property",
-                description: "Find all accesses to a property pattern (e.g., 'AuthManager.shared', 'account.*')",
+                description: "Find all accesses to a property pattern (e.g., 'Account.*', 'Manager.shared'). Use filterProperty to find specific properties like 'tokens' or 'email'.",
                 inputSchema: MCPInputSchema(
                     properties: [
-                        "pattern": MCPProperty(type: "string", description: "Property pattern to track (supports wildcards)")
+                        "pattern": MCPProperty(type: "string", description: "Property pattern to track (e.g., 'Account.*')"),
+                        "filterProperty": MCPProperty(type: "string", description: "Filter to specific property name (e.g., 'tokens', 'email', 'token*' for prefix match)")
                     ],
                     required: ["pattern"]
                 )
@@ -733,7 +734,8 @@ class MCPServer {
             guard let pattern = arguments["pattern"]?.stringValue else {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: pattern"])
             }
-            return try executeTrackProperty(pattern: pattern)
+            let filterProperty = arguments["filterProperty"]?.stringValue
+            return try executeTrackProperty(pattern: pattern, filterProperty: filterProperty)
         case "find_calls":
             guard let pattern = arguments["pattern"]?.stringValue else {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: pattern"])
@@ -1156,8 +1158,8 @@ class MCPServer {
         return result
     }
     
-    private func executeTrackProperty(pattern: String) throws -> String {
-        let cacheKey = "track_property:\(pattern)"
+    private func executeTrackProperty(pattern: String, filterProperty: String? = nil) throws -> String {
+        let cacheKey = "track_property:\(pattern):\(filterProperty ?? "all")"
         if let cached = cache.getCachedResult(for: cacheKey) {
             if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
             return cached
@@ -1165,7 +1167,7 @@ class MCPServer {
         
         let parsedFiles = cache.parsedFiles
         let analyzer = PropertyAccessAnalyzer()
-        let report = analyzer.analyze(parsedFiles: parsedFiles, targetPattern: pattern)
+        let report = analyzer.analyze(parsedFiles: parsedFiles, targetPattern: pattern, filterProperty: filterProperty)
         let result = encodeToJSON(report)
         cache.cacheResult(result, for: cacheKey)
         return result
