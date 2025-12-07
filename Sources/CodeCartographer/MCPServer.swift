@@ -354,6 +354,16 @@ class MCPServer {
                 inputSchema: MCPInputSchema()
             ),
             MCPTool(
+                name: "get_architecture_diagram",
+                description: "Generate a Mermaid.js diagram of the project architecture (inheritance, protocols, dependencies)",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "type": MCPProperty(type: "string", description: "Diagram type: 'inheritance', 'protocols', 'dependencies', 'full' (default: full)"),
+                        "maxNodes": MCPProperty(type: "integer", description: "Maximum nodes to include (default: 50)")
+                    ]
+                )
+            ),
+            MCPTool(
                 name: "analyze_file",
                 description: "Get detailed health analysis for a single Swift file",
                 inputSchema: MCPInputSchema(
@@ -695,6 +705,10 @@ class MCPServer {
             return executeGetVersion()
         case "get_summary":
             return try executeGetSummary()
+        case "get_architecture_diagram":
+            let typeStr = arguments["type"]?.stringValue ?? "full"
+            let maxNodes = arguments["maxNodes"]?.intValue ?? 50
+            return try executeGetArchitectureDiagram(type: typeStr, maxNodes: maxNodes)
         case "analyze_file":
             guard let path = arguments["path"]?.stringValue else {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: path"])
@@ -820,6 +834,13 @@ class MCPServer {
     
     // MARK: - Tool Implementations
     
+    /// Ensure files are loaded before analysis (background scan may still be running)
+    private func ensureFilesLoaded() {
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
+    }
+    
     private func executeGetVersion() -> String {
         struct VersionInfo: Codable {
             let name: String
@@ -834,11 +855,47 @@ class MCPServer {
             name: "CodeCartographer",
             version: "1.0.0",
             description: "Swift Static Analyzer for AI Coding Assistants",
-            toolCount: 36,
+            toolCount: 37,
             currentProject: projectRoot.path,
             fileCount: cache.fileCount
         )
         return encodeToJSON(info)
+    }
+    
+    private func executeGetArchitectureDiagram(type: String, maxNodes: Int) throws -> String {
+        let cacheKey = "architecture_diagram:\(type):\(maxNodes)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
+        ensureFilesLoaded()
+        let parsedFiles = cache.parsedFiles
+        
+        // Get type map
+        let graphAnalyzer = DependencyGraphAnalyzer()
+        let typeMap = graphAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
+        
+        // Determine diagram type
+        let diagramType: DiagramType
+        switch type.lowercased() {
+        case "inheritance": diagramType = .inheritance
+        case "protocols": diagramType = .protocols
+        case "dependencies": diagramType = .dependencies
+        default: diagramType = .full
+        }
+        
+        // Generate diagram
+        let diagram = MermaidGenerator.generate(
+            typeMap: typeMap,
+            singletonTypes: [],  // Could enhance to detect singletons
+            diagramType: diagramType,
+            maxNodes: maxNodes
+        )
+        
+        let result = encodeToJSON(diagram)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeGetSummary() throws -> String {
@@ -849,6 +906,7 @@ class MCPServer {
             return cached
         }
         
+        ensureFilesLoaded()
         let parsedFiles = cache.parsedFiles  // Uses cached ASTs!
         
         // Run analyzers in parallel for better performance

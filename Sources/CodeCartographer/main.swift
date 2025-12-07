@@ -74,6 +74,7 @@ let analysisModes: [(flag: String, name: String, description: String)] = [
     ("--refactor", "Refactoring", "God functions with extraction suggestions"),
     ("--refactor-detail F:S-E", "Extract Detail", "Full extraction info for FILE:START-END"),
     ("--api", "API Surface", "Full type signatures, methods, properties"),
+    ("--graph [TYPE]", "Architecture Diagram", "Generate Mermaid.js diagram (inheritance/protocols/dependencies/full)"),
     ("--summary", "Summary", "Compact AI-friendly overview of code health"),
     ("--property TARGET", "Property Access", "Track all accesses to a specific pattern"),
     ("--calls PATTERN", "Method Calls", "Find method calls matching pattern (e.g., *.forgotPassword, pool.*)"),
@@ -280,6 +281,21 @@ func main() {
     let apiMode = args.contains("--api")
     let runAll = args.contains("--all")
     let summaryMode = args.contains("--summary")
+    
+    // Graph mode: --graph [TYPE]
+    var graphType: String? = nil
+    if args.contains("--graph") {
+        if let graphIndex = args.firstIndex(of: "--graph"), graphIndex + 1 < args.count {
+            let nextArg = args[graphIndex + 1]
+            if !nextArg.hasPrefix("-") {
+                graphType = nextArg
+            } else {
+                graphType = "full"
+            }
+        } else {
+            graphType = "full"
+        }
+    }
     
     // Compare baseline for --summary --compare
     var compareBaseline: String? = nil
@@ -750,6 +766,45 @@ func main() {
     // Health mode - unified view of all issues for one file
     if let targetFile = healthTarget {
         if runHealthAnalysis(targetFile: targetFile, files: swiftFiles, rootURL: rootURL, verbose: verbose, outputFile: outputFile) { return }
+    }
+    
+    // Graph mode - architecture diagrams
+    if let diagramTypeStr = graphType {
+        if verbose {
+            fputs("📊 Generating architecture diagram (\(diagramTypeStr))...\n", stderr)
+        }
+        
+        // Parse files
+        let parsedFiles = swiftFiles.compactMap { try? ParsedFile(url: $0, relativeTo: rootURL) }
+        
+        // Get type map
+        let graphAnalyzer = DependencyGraphAnalyzer()
+        let typeMap = graphAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
+        
+        // Determine diagram type
+        let diagramType: DiagramType
+        switch diagramTypeStr.lowercased() {
+        case "inheritance": diagramType = .inheritance
+        case "protocols": diagramType = .protocols
+        case "dependencies": diagramType = .dependencies
+        default: diagramType = .full
+        }
+        
+        // Generate diagram
+        let diagram = MermaidGenerator.generate(
+            typeMap: typeMap,
+            singletonTypes: [],
+            diagramType: diagramType,
+            maxNodes: 50
+        )
+        
+        if verbose {
+            fputs("📊 Generated \(diagram.nodeCount) nodes, \(diagram.edgeCount) edges\n", stderr)
+            fputs("🔗 View at: \(diagram.renderUrl)\n", stderr)
+        }
+        
+        outputJSON(diagram, to: outputFile)
+        return
     }
     
     // Summary mode - compact AI-friendly overview

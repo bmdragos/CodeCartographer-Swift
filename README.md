@@ -64,13 +64,14 @@ AI: "Switch to the iOS project"
 → {"status": "switched", "fileCount": 1099}
 ```
 
-## Available Tools (36)
+## Available Tools (37)
 
 ### Core Analysis
 | Tool | Description |
 |------|-------------|
 | `get_version` | Version info and current project status |
 | `get_summary` | Project health overview with top issues |
+| `get_architecture_diagram` | Generate Mermaid.js architecture diagram |
 | `analyze_file` | Deep health check for a single file |
 | `set_project` | Switch to a different Swift project |
 
