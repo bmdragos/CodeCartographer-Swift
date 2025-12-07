@@ -331,7 +331,7 @@ class ChunkExtractor {
         allChunks.append(contentsOf: fileSummaryChunks)
         
         // Step 5: Generate cluster chunks (groups of related files)
-        let clusterChunks = generateClusterChunks(from: allChunks)
+        let clusterChunks = generateClusterChunks(from: allChunks, parsedFiles: parsedFiles)
         allChunks.append(contentsOf: clusterChunks)
         
         if verbose {
@@ -556,44 +556,102 @@ class ChunkExtractor {
         return summaries
     }
     
-    /// Generate cluster chunks by grouping files with shared module paths
-    private func generateClusterChunks(from chunks: [CodeChunk]) -> [CodeChunk] {
+    /// Generate cluster chunks using DependencyGraphAnalyzer for smarter grouping
+    private func generateClusterChunks(from chunks: [CodeChunk], parsedFiles: [ParsedFile]) -> [CodeChunk] {
         var clusters: [CodeChunk] = []
         
-        // Group files by module path (directory structure)
+        // Use DependencyGraphAnalyzer for real coupling data
+        let graphAnalyzer = DependencyGraphAnalyzer()
+        let typeMap = graphAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
+        
+        // Standard library imports to ignore for clustering
+        let standardImports: Set<String> = ["Foundation", "UIKit", "SwiftUI", "Combine", "Swift"]
+        
+        // 1. Cluster by protocol conformance (files implementing same protocol are related)
+        for (proto, conformers) in typeMap.protocolConformances where conformers.count >= 2 {
+            // Map conforming types to their files
+            var filesForProtocol: Set<String> = []
+            for conformer in conformers {
+                if let file = typeMap.typeToFile[conformer] {
+                    filesForProtocol.insert(file)
+                }
+            }
+            
+            guard filesForProtocol.count >= 2 else { continue }
+            
+            let fileList = filesForProtocol.sorted()
+            let summaryChunks = chunks.filter { $0.kind == .fileSummary && filesForProtocol.contains($0.file) }
+            let allImports = Set(summaryChunks.flatMap { $0.imports }).subtracting(standardImports)
+            let allPatterns = Set(summaryChunks.flatMap { $0.patterns })
+            let allAttributes = Set(summaryChunks.flatMap { $0.attributes })
+            let primaryLayer = summaryChunks.first?.layer ?? "unknown"
+            
+            let fileNames = fileList.prefix(5).map { ($0 as NSString).lastPathComponent }
+            let fileDesc = fileList.count > 5 ? "\(fileNames.joined(separator: ", "))... (\(fileList.count) files)" : fileNames.joined(separator: ", ")
+            
+            let cluster = CodeChunk(
+                id: "cluster:protocol:\(proto)",
+                file: "protocol:\(proto)",
+                line: 1,
+                endLine: 1,
+                name: "\(proto) conformers",
+                kind: .cluster,
+                parentType: nil,
+                modulePath: proto,
+                signature: "Cluster: \(proto) protocol conformers",
+                parameters: [],
+                returnType: nil,
+                docComment: nil,
+                purpose: "\(fileList.count) files conform to \(proto): \(fileDesc). Imports: \(allImports.prefix(3).joined(separator: ", "))",
+                calls: [],
+                calledBy: [],
+                usesTypes: [],
+                conformsTo: [proto],
+                complexity: nil,
+                lineCount: fileList.count,
+                visibility: .internal,
+                isSingleton: false,
+                hasSmells: false,
+                hasTodo: false,
+                attributes: Array(allAttributes),
+                propertyWrappers: [],
+                keywords: ["cluster", "protocol", proto.lowercased(), primaryLayer],
+                layer: primaryLayer,
+                imports: Array(allImports),
+                patterns: Array(allPatterns)
+            )
+            clusters.append(cluster)
+        }
+        
+        // 2. Keep directory clusters as secondary grouping
         var filesByModule: [String: Set<String>] = [:]
         for chunk in chunks where chunk.kind == .fileSummary {
             let module = chunk.modulePath.isEmpty ? "Root" : chunk.modulePath
             filesByModule[module, default: []].insert(chunk.file)
         }
         
-        // Only create clusters for modules with 2+ files
         for (module, files) in filesByModule where files.count >= 2 {
             let fileList = files.sorted()
-            
-            // Collect metadata from file summaries in this cluster
             let summaryChunks = chunks.filter { $0.kind == .fileSummary && files.contains($0.file) }
-            let allImports = Set(summaryChunks.flatMap { $0.imports })
+            let allImports = Set(summaryChunks.flatMap { $0.imports }).subtracting(standardImports)
             let allPatterns = Set(summaryChunks.flatMap { $0.patterns })
             let allAttributes = Set(summaryChunks.flatMap { $0.attributes })
             let primaryLayer = summaryChunks.first?.layer ?? "unknown"
             
-            // Build cluster description
             let fileNames = fileList.prefix(5).map { ($0 as NSString).lastPathComponent }
             let fileDesc = fileList.count > 5 ? "\(fileNames.joined(separator: ", "))... (\(fileList.count) files)" : fileNames.joined(separator: ", ")
             
             let sharedImports = allImports.filter { imp in
-                // Only include imports shared by majority of files
                 let count = summaryChunks.filter { $0.imports.contains(imp) }.count
-                return count >= summaryChunks.count / 2
+                return count >= max(1, summaryChunks.count / 2)
             }
             
             let cluster = CodeChunk(
-                id: "cluster:\(module)",
+                id: "cluster:dir:\(module)",
                 file: module,
                 line: 1,
                 endLine: 1,
-                name: module,
+                name: (module as NSString).lastPathComponent,
                 kind: .cluster,
                 parentType: nil,
                 modulePath: module,
