@@ -344,6 +344,11 @@ class MCPServer {
         
         let tools: [MCPTool] = [
             MCPTool(
+                name: "get_version",
+                description: "Get CodeCartographer version and server info",
+                inputSchema: MCPInputSchema()
+            ),
+            MCPTool(
                 name: "get_summary",
                 description: "Get a quick health summary of the Swift project including code smells, god functions, and refactoring opportunities",
                 inputSchema: MCPInputSchema()
@@ -686,6 +691,8 @@ class MCPServer {
     
     private func executeTool(name: String, arguments: [String: JSONValue]) throws -> String {
         switch name {
+        case "get_version":
+            return executeGetVersion()
         case "get_summary":
             return try executeGetSummary()
         case "analyze_file":
@@ -812,6 +819,27 @@ class MCPServer {
     }
     
     // MARK: - Tool Implementations
+    
+    private func executeGetVersion() -> String {
+        struct VersionInfo: Codable {
+            let name: String
+            let version: String
+            let description: String
+            let toolCount: Int
+            let currentProject: String?
+            let fileCount: Int
+        }
+        
+        let info = VersionInfo(
+            name: "CodeCartographer",
+            version: "1.0.0",
+            description: "Swift Static Analyzer for AI Coding Assistants",
+            toolCount: 36,
+            currentProject: projectRoot.path,
+            fileCount: cache.fileCount
+        )
+        return encodeToJSON(info)
+    }
     
     private func executeGetSummary() throws -> String {
         // Check result cache first
