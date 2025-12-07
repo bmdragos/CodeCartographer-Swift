@@ -45,6 +45,10 @@ struct CodeChunk: Codable {
     // Domain keywords (extracted from names, strings, comments)
     let keywords: [String]
     
+    // Architecture (inferred from imports and patterns)
+    let layer: String              // ui, network, persistence, reactive, business-logic
+    let patterns: [String]         // async-await, callback, throws, delegate, singleton, rx-observable
+    
     // The formatted text for embedding
     var embeddingText: String {
         var parts: [String] = []
@@ -77,6 +81,12 @@ struct CodeChunk: Codable {
         // Domain keywords
         if !keywords.isEmpty {
             parts.append("Domain: \(keywords.joined(separator: ", "))")
+        }
+        
+        // Architecture
+        parts.append("Layer: \(layer)")
+        if !patterns.isEmpty {
+            parts.append("Patterns: \(patterns.joined(separator: ", "))")
         }
         
         // Metrics
@@ -120,9 +130,13 @@ class ChunkExtractor {
         
         // First pass: extract all chunks and build call graph
         for file in parsedFiles {
+            // Extract imports from the AST
+            let imports = extractImports(from: file.ast)
+            
             let visitor = ChunkVisitor(
                 filePath: file.relativePath,
-                sourceText: file.sourceText
+                sourceText: file.sourceText,
+                imports: imports
             )
             visitor.walk(file.ast)
             allChunks.append(contentsOf: visitor.chunks)
@@ -171,11 +185,24 @@ class ChunkExtractor {
                 isSingleton: chunk.isSingleton,
                 hasSmells: chunk.hasSmells,
                 hasTodo: chunk.hasTodo,
-                keywords: chunk.keywords
+                keywords: chunk.keywords,
+                layer: chunk.layer,
+                patterns: chunk.patterns
             )
         }
         
         return allChunks
+    }
+    
+    private func extractImports(from ast: SourceFileSyntax) -> [String] {
+        var imports: [String] = []
+        for statement in ast.statements {
+            if let importDecl = statement.item.as(ImportDeclSyntax.self) {
+                let moduleName = importDecl.path.description.trimmingCharacters(in: .whitespaces)
+                imports.append(moduleName)
+            }
+        }
+        return imports
     }
 }
 
@@ -184,15 +211,77 @@ class ChunkExtractor {
 final class ChunkVisitor: SyntaxVisitor {
     let filePath: String
     let sourceText: String
+    let imports: [String]
+    let layer: String
     private(set) var chunks: [CodeChunk] = []
     
     private var currentType: String?
     private var currentTypeKind: CodeChunk.ChunkKind?
     
-    init(filePath: String, sourceText: String) {
+    init(filePath: String, sourceText: String, imports: [String]) {
         self.filePath = filePath
         self.sourceText = sourceText
+        self.imports = imports
+        self.layer = Self.inferLayer(from: imports)
         super.init(viewMode: .sourceAccurate)
+    }
+    
+    // MARK: - Layer Inference
+    
+    private static func inferLayer(from imports: [String]) -> String {
+        let importText = imports.joined(separator: " ")
+        
+        if importText.contains("UIKit") || importText.contains("SwiftUI") || importText.contains("AppKit") {
+            return "ui"
+        }
+        if importText.contains("Alamofire") || importText.contains("URLSession") || importText.contains("Network") {
+            return "network"
+        }
+        if importText.contains("CoreData") || importText.contains("Security") || importText.contains("KeychainAccess") {
+            return "persistence"
+        }
+        if importText.contains("RxSwift") || importText.contains("Combine") || importText.contains("RxCocoa") {
+            return "reactive"
+        }
+        return "business-logic"
+    }
+    
+    // MARK: - Pattern Detection
+    
+    private func detectPatterns(signature: String, bodyText: String, hasThrows: Bool) -> [String] {
+        var patterns: [String] = []
+        
+        // Async/await
+        if signature.contains("async") || bodyText.contains("await ") {
+            patterns.append("async-await")
+        }
+        
+        // Throws
+        if hasThrows {
+            patterns.append("throws")
+        }
+        
+        // Callback pattern
+        if signature.contains("completion") || signature.contains("handler") || signature.contains("callback") {
+            patterns.append("callback")
+        }
+        
+        // Delegate
+        if signature.contains("delegate") || bodyText.contains("delegate?.") || bodyText.contains("delegate.") {
+            patterns.append("delegate")
+        }
+        
+        // RxSwift/Combine
+        if bodyText.contains("Observable") || bodyText.contains("subscribe") || bodyText.contains("Publisher") {
+            patterns.append("rx-observable")
+        }
+        
+        // Singleton usage
+        if bodyText.contains(".shared") || bodyText.contains("sharedInstance") {
+            patterns.append("uses-singleton")
+        }
+        
+        return patterns
     }
     
     // MARK: - Type declarations
@@ -361,7 +450,9 @@ final class ChunkVisitor: SyntaxVisitor {
             isSingleton: isSingleton,
             hasSmells: false,
             hasTodo: nodeText.contains("TODO") || nodeText.contains("FIXME"),
-            keywords: keywords
+            keywords: keywords,
+            layer: layer,
+            patterns: isSingleton ? ["singleton"] : []
         )
     }
     
@@ -415,6 +506,12 @@ final class ChunkVisitor: SyntaxVisitor {
         let bodyText = node.body?.description ?? ""
         let hasSmells = bodyText.contains("!") && !bodyText.contains("!=")  // Force unwrap, not inequality
         
+        // Check if function throws
+        let hasThrows = node.signature.effectSpecifiers?.throwsClause != nil
+        
+        // Detect patterns
+        let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows)
+        
         // Module path
         let modulePath = extractModulePath(from: filePath)
         
@@ -444,7 +541,9 @@ final class ChunkVisitor: SyntaxVisitor {
             isSingleton: false,
             hasSmells: hasSmells,
             hasTodo: bodyText.contains("TODO") || bodyText.contains("FIXME"),
-            keywords: keywords
+            keywords: keywords,
+            layer: layer,
+            patterns: patterns
         )
     }
     
@@ -463,6 +562,11 @@ final class ChunkVisitor: SyntaxVisitor {
         let docComment = extractDocComment(for: node)
         
         let modulePath = extractModulePath(from: filePath)
+        
+        // Check if init throws
+        let hasThrows = node.signature.effectSpecifiers?.throwsClause != nil
+        let bodyText = node.body?.description ?? ""
+        let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows)
         
         return CodeChunk(
             id: "\(filePath):\(startLine)",
@@ -488,7 +592,9 @@ final class ChunkVisitor: SyntaxVisitor {
             isSingleton: false,
             hasSmells: false,
             hasTodo: false,
-            keywords: extractKeywords(from: currentType ?? "")
+            keywords: extractKeywords(from: currentType ?? ""),
+            layer: layer,
+            patterns: patterns
         )
     }
     
