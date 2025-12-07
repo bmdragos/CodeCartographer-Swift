@@ -1010,6 +1010,11 @@ class MCPServer {
             return cached
         }
         
+        // Ensure scan completed
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
+        
         let parsedFiles = cache.getFiles(matching: path)
         
         guard !parsedFiles.isEmpty else {
@@ -1196,6 +1201,11 @@ class MCPServer {
     }
     
     private func executeListFiles(path: String?) throws -> String {
+        // Ensure scan completed
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
+        
         var files = cache.fileURLs.map { 
             $0.path.replacingOccurrences(of: projectRoot.path + "/", with: "") 
         }
@@ -1213,6 +1223,11 @@ class MCPServer {
     }
     
     private func executeReadSource(path: String, startLine: Int?, endLine: Int?) throws -> String {
+        // Ensure scan completed
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
+        
         let matches = cache.fileURLs.filter {
             $0.lastPathComponent == path || $0.path.hasSuffix(path)
         }
@@ -1291,11 +1306,19 @@ class MCPServer {
     
     /// Get ParsedFiles for analyzers that support AST caching
     private func getParsedFiles(for path: String?) throws -> [ParsedFile] {
+        // Ensure scan completed before accessing files
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
         return cache.getFiles(matching: path)
     }
     
     /// Get file URLs for analyzers that don't yet support AST caching
     private func getFiles(for path: String?) throws -> [URL] {
+        // Ensure scan completed before accessing files
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
         let parsedFiles = cache.getFiles(matching: path)
         guard !parsedFiles.isEmpty || path == nil else {
             throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path!)"])
@@ -1595,6 +1618,11 @@ class MCPServer {
     }
     
     private func executeGetRefactorDetail(file: String, startLine: Int, endLine: Int) throws -> String {
+        // Ensure scan completed
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
+        }
+        
         let matches = cache.fileURLs.filter {
             $0.lastPathComponent == file || $0.path.hasSuffix(file)
         }
@@ -1724,6 +1752,11 @@ class MCPServer {
         if let cached = cache.getCachedResult(for: cacheKey) {
             if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
             return cached
+        }
+        
+        // Ensure scan completed
+        if cache.fileCount == 0 {
+            cache.scan(verbose: verbose)
         }
         
         let authAnalyzer = AuthMigrationAnalyzer()
