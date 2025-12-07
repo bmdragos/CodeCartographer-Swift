@@ -879,6 +879,12 @@ class MCPServer {
     }
     
     private func executeAnalyzeFile(path: String) throws -> String {
+        let cacheKey = "analyze_file:\(path)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let parsedFiles = cache.getFiles(matching: path)
         
         guard !parsedFiles.isEmpty else {
@@ -961,7 +967,9 @@ class MCPServer {
             extractionOpportunities: refactorReport.extractionOpportunities.count
         )
         
-        return encodeToJSON(analysis)
+        let result = encodeToJSON(analysis)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindSmells(path: String?) throws -> String {
@@ -1146,6 +1154,12 @@ class MCPServer {
     }
     
     private func executeFindSingletons(path: String?) throws -> String {
+        let cacheKey = "find_singletons:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let files = try getFiles(for: path)
         
         var nodes: [FileNode] = []
@@ -1158,7 +1172,7 @@ class MCPServer {
         }
         
         let summary = buildSingletonSummary(from: nodes)
-        let result = ExtendedAnalysisResult(
+        let analysisResult = ExtendedAnalysisResult(
             analyzedAt: ISO8601DateFormatter().string(from: Date()),
             rootPath: projectRoot.path,
             fileCount: files.count,
@@ -1167,7 +1181,9 @@ class MCPServer {
             targets: nil
         )
         
-        return encodeToJSON(result)
+        let result = encodeToJSON(analysisResult)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeFindTypes(path: String?) throws -> String {
@@ -1353,18 +1369,34 @@ class MCPServer {
     }
     
     private func executeAnalyzeTests() throws -> String {
+        let cacheKey = "analyze_tests"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         // For tests, scan parent directory to find sibling test folders
         let parentURL = projectRoot.deletingLastPathComponent()
         let allFiles = findAllSwiftFiles(in: parentURL)
         let analyzer = TestCoverageAnalyzer()
         let report = analyzer.analyze(files: allFiles, relativeTo: parentURL, targetAnalysis: nil)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeDependencies() throws -> String {
+        let cacheKey = "analyze_dependencies"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let analyzer = DependencyManagerAnalyzer()
         let report = analyzer.analyze(projectRoot: projectRoot)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeCoreData(path: String?) throws -> String {
@@ -1523,25 +1555,49 @@ class MCPServer {
     }
     
     private func executeAnalyzeAPISurface(path: String?) throws -> String {
+        let cacheKey = "analyze_api_surface:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let files = try getFiles(for: path)
         let analyzer = APIAnalyzer()
         let report = analyzer.analyze(files: files, relativeTo: projectRoot)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeGenerateMigrationChecklist() throws -> String {
+        let cacheKey = "generate_migration_checklist"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let authAnalyzer = AuthMigrationAnalyzer()
         let authReport = authAnalyzer.analyze(files: cache.fileURLs, relativeTo: projectRoot)
         let generator = MigrationChecklistGenerator()
         let checklist = generator.generateAuthMigrationChecklist(from: authReport)
-        return encodeToJSON(checklist)
+        let result = encodeToJSON(checklist)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     private func executeAnalyzeAuthMigration(path: String?) throws -> String {
+        let cacheKey = "analyze_auth_migration:\(path ?? "all")"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+        
         let files = try getFiles(for: path)
         let analyzer = AuthMigrationAnalyzer()
         let report = analyzer.analyze(files: files, relativeTo: projectRoot)
-        return encodeToJSON(report)
+        let result = encodeToJSON(report)
+        cache.cacheResult(result, for: cacheKey)
+        return result
     }
     
     // MARK: - Response Helpers
