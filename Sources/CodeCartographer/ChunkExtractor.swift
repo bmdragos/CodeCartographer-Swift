@@ -42,6 +42,10 @@ public struct CodeChunk: Codable {
     let hasSmells: Bool
     let hasTodo: Bool
     
+    // Attributes & Property Wrappers (for concurrency/SwiftUI analysis)
+    let attributes: [String]        // @MainActor, @available, @discardableResult, @objc, etc.
+    let propertyWrappers: [String]  // @State, @Published, @ObservedObject, @Binding, etc.
+    
     // Domain keywords (extracted from names, strings, comments)
     let keywords: [String]
     
@@ -89,6 +93,12 @@ public struct CodeChunk: Codable {
         if !imports.isEmpty {
             parts.append("Uses: \(imports.joined(separator: ", "))")
         }
+        if !attributes.isEmpty {
+            parts.append("Attributes: \(attributes.joined(separator: ", "))")
+        }
+        if !propertyWrappers.isEmpty {
+            parts.append("PropertyWrappers: \(propertyWrappers.joined(separator: ", "))")
+        }
         if !patterns.isEmpty {
             parts.append("Patterns: \(patterns.joined(separator: ", "))")
         }
@@ -113,6 +123,7 @@ public struct CodeChunk: Codable {
         case `enum`
         case `protocol`
         case `extension`
+        case hotspot  // File-level health/quality summary
     }
     
     public enum Visibility: String, Codable {
@@ -300,6 +311,8 @@ class ChunkExtractor {
                 isSingleton: chunk.isSingleton,
                 hasSmells: chunk.hasSmells,
                 hasTodo: chunk.hasTodo,
+                attributes: chunk.attributes,
+                propertyWrappers: chunk.propertyWrappers,
                 keywords: chunk.keywords,
                 layer: chunk.layer,
                 imports: chunk.imports,
@@ -307,7 +320,132 @@ class ChunkExtractor {
             )
         }
         
+        // Step 3: Generate hotspot chunks (file-level health summaries)
+        let hotspotChunks = generateHotspotChunks(from: allChunks, parsedFiles: parsedFiles)
+        allChunks.append(contentsOf: hotspotChunks)
+        
+        if verbose {
+            fputs("[ChunkExtractor] Added \(hotspotChunks.count) hotspot chunks\n", stderr)
+        }
+        
         return allChunks
+    }
+    
+    /// Generate hotspot chunks for files with quality issues
+    /// Uses actual analyzers for accurate data
+    private func generateHotspotChunks(from chunks: [CodeChunk], parsedFiles: [ParsedFile]) -> [CodeChunk] {
+        var hotspots: [CodeChunk] = []
+        
+        // Run actual analyzers for accurate data
+        let smellAnalyzer = CodeSmellAnalyzer()
+        let smellReport = smellAnalyzer.analyze(parsedFiles: parsedFiles)
+        
+        let metricsAnalyzer = FunctionMetricsAnalyzer()
+        let metricsReport = metricsAnalyzer.analyze(parsedFiles: parsedFiles)
+        
+        // Group data by file
+        var chunksByFile: [String: [CodeChunk]] = [:]
+        for chunk in chunks {
+            chunksByFile[chunk.file, default: []].append(chunk)
+        }
+        
+        // Group god functions by file
+        var godFunctionsByFile: [String: [FunctionMetric]] = [:]
+        for gf in metricsReport.godFunctions {
+            godFunctionsByFile[gf.file, default: []].append(gf)
+        }
+        
+        // Group smells by file and type
+        var smellDetailsByFile: [String: [String: Int]] = [:]  // file -> (type -> count)
+        for smell in smellReport.smells {
+            smellDetailsByFile[smell.file, default: [:]][smell.type.rawValue, default: 0] += 1
+        }
+        
+        for file in parsedFiles {
+            let fileChunks = chunksByFile[file.relativePath] ?? []
+            let fileGodFunctions = godFunctionsByFile[file.relativePath] ?? []
+            let fileSmellDetails = smellDetailsByFile[file.relativePath] ?? [:]
+            let totalSmells = smellReport.smellsByFile[file.relativePath] ?? 0
+            
+            // Count from chunks (these are accurate)
+            let todoCount = fileChunks.filter { $0.hasTodo }.count
+            let singletonCount = fileChunks.filter { $0.isSingleton }.count
+            let totalComplexity = fileChunks.compactMap { $0.complexity }.reduce(0, +)
+            let totalLines = file.sourceText.components(separatedBy: .newlines).count
+            
+            // Only create hotspot if file has significant issues
+            let hasIssues = fileGodFunctions.count > 0 || totalSmells >= 5 || singletonCount > 0
+            guard hasIssues else { continue }
+            
+            // Build detailed hotspot description
+            var issues: [String] = []
+            
+            if fileGodFunctions.count > 0 {
+                let names = fileGodFunctions.prefix(3).map { $0.name }.joined(separator: ", ")
+                issues.append("\(fileGodFunctions.count) god functions: \(names)")
+            }
+            
+            if totalSmells > 0 {
+                // Include breakdown by type
+                let breakdown = fileSmellDetails
+                    .sorted { $0.value > $1.value }
+                    .prefix(3)
+                    .map { "\($0.value) \($0.key)" }
+                    .joined(separator: ", ")
+                issues.append("\(totalSmells) smells (\(breakdown))")
+            }
+            
+            if singletonCount > 0 {
+                issues.append("\(singletonCount) singletons")
+            }
+            
+            if todoCount > 0 {
+                issues.append("\(todoCount) TODOs")
+            }
+            
+            // Collect unique attributes and patterns from file
+            let allAttributes = Set(fileChunks.flatMap { $0.attributes })
+            let allPatterns = Set(fileChunks.flatMap { $0.patterns })
+            
+            // Derive modulePath and imports from existing chunks
+            let modulePath = fileChunks.first?.modulePath ?? ""
+            let fileImports = fileChunks.first?.imports ?? []
+            
+            let hotspot = CodeChunk(
+                id: "hotspot:\(file.relativePath)",
+                file: file.relativePath,
+                line: 1,
+                endLine: totalLines,
+                name: (file.relativePath as NSString).lastPathComponent,
+                kind: .hotspot,
+                parentType: nil,
+                modulePath: modulePath,
+                signature: "Hotspot: \(file.relativePath)",
+                parameters: [],
+                returnType: nil,
+                docComment: nil,
+                purpose: "File health: \(issues.joined(separator: ", "))",
+                calls: [],
+                calledBy: [],
+                usesTypes: [],
+                conformsTo: [],
+                complexity: totalComplexity,
+                lineCount: totalLines,
+                visibility: .internal,
+                isSingleton: singletonCount > 0,
+                hasSmells: totalSmells > 0,
+                hasTodo: todoCount > 0,
+                attributes: Array(allAttributes),
+                propertyWrappers: [],
+                keywords: ["hotspot", "refactor", "quality", "tech-debt"],
+                layer: fileChunks.first?.layer ?? "unknown",
+                imports: fileImports,
+                patterns: Array(allPatterns)
+            )
+            hotspots.append(hotspot)
+        }
+        
+        return hotspots
     }
     
     private func extractImports(from ast: SourceFileSyntax) -> [String] {
@@ -572,6 +710,10 @@ final class ChunkVisitor: SyntaxVisitor {
         // Module path from file
         let modulePath = extractModulePath(from: filePath)
         
+        // Extract attributes and property wrappers
+        let attributes = extractAttributes(from: node)
+        let propertyWrappers = extractPropertyWrappers(from: node)
+        
         return CodeChunk(
             id: "\(filePath):\(startLine)",
             file: filePath,
@@ -596,6 +738,8 @@ final class ChunkVisitor: SyntaxVisitor {
             isSingleton: isSingleton,
             hasSmells: false,
             hasTodo: nodeText.contains("TODO") || nodeText.contains("FIXME"),
+            attributes: attributes,
+            propertyWrappers: propertyWrappers,
             keywords: keywords,
             layer: inferLayerForChunk(typeName: name),
             imports: imports,
@@ -662,6 +806,10 @@ final class ChunkVisitor: SyntaxVisitor {
         // Module path
         let modulePath = extractModulePath(from: filePath)
         
+        // Extract attributes and property wrappers
+        let attributes = extractAttributes(from: node)
+        let propertyWrappers = extractPropertyWrappers(from: node)
+        
         let kind: CodeChunk.ChunkKind = currentType != nil ? .method : .function
         
         return CodeChunk(
@@ -688,6 +836,8 @@ final class ChunkVisitor: SyntaxVisitor {
             isSingleton: false,
             hasSmells: hasSmells,
             hasTodo: bodyText.contains("TODO") || bodyText.contains("FIXME"),
+            attributes: attributes,
+            propertyWrappers: propertyWrappers,
             keywords: keywords,
             layer: inferLayerForChunk(typeName: currentType),
             imports: imports,
@@ -716,6 +866,10 @@ final class ChunkVisitor: SyntaxVisitor {
         let bodyText = node.body?.description ?? ""
         let patterns = detectPatterns(signature: signature, bodyText: bodyText, hasThrows: hasThrows, startLine: startLine, endLine: endLine)
         
+        // Extract attributes and property wrappers
+        let attributes = extractAttributes(from: node)
+        let propertyWrappers = extractPropertyWrappers(from: node)
+        
         return CodeChunk(
             id: "\(filePath):\(startLine)",
             file: filePath,
@@ -740,6 +894,8 @@ final class ChunkVisitor: SyntaxVisitor {
             isSingleton: false,
             hasSmells: false,
             hasTodo: false,
+            attributes: attributes,
+            propertyWrappers: propertyWrappers,
             keywords: extractKeywords(from: currentType ?? ""),
             layer: inferLayerForChunk(typeName: currentType),
             imports: imports,
@@ -759,6 +915,72 @@ final class ChunkVisitor: SyntaxVisitor {
             }
         }
         return .internal
+    }
+    
+    /// Extract attributes like @MainActor, @available, @discardableResult, @objc, etc.
+    private func extractAttributes(from node: some SyntaxProtocol) -> [String] {
+        var attributes: [String] = []
+        
+        // Check for AttributeListSyntax in the node's description
+        // This is a simplified approach - we look for @Name patterns
+        let nodeText = node.description
+        
+        // Known Swift attributes (not property wrappers)
+        let knownAttributes = [
+            "@MainActor", "@globalActor", "@Sendable", "@nonisolated",  // Concurrency
+            "@available", "@unavailable",                                // Availability
+            "@discardableResult", "@inlinable", "@usableFromInline",    // Optimization
+            "@objc", "@objcMembers", "@nonobjc",                        // ObjC interop
+            "@escaping", "@autoclosure", "@convention",                  // Closures
+            "@frozen", "@unknown",                                       // Enums
+            "@IBAction", "@IBOutlet", "@IBDesignable", "@IBInspectable", // Interface Builder
+            "@testable", "@_exported",                                   // Imports
+            "@dynamicMemberLookup", "@dynamicCallable",                 // Dynamic features
+            "@propertyWrapper", "@resultBuilder",                        // Meta
+            "@preconcurrency", "@unchecked"                             // Safety
+        ]
+        
+        for attr in knownAttributes {
+            if nodeText.contains(attr) {
+                attributes.append(attr)
+            }
+        }
+        
+        return attributes
+    }
+    
+    /// Extract property wrappers like @State, @Published, @ObservedObject, etc.
+    private func extractPropertyWrappers(from node: some SyntaxProtocol) -> [String] {
+        var wrappers: [String] = []
+        
+        let nodeText = node.description
+        
+        // SwiftUI property wrappers
+        let swiftUIWrappers = [
+            "@State", "@Binding", "@ObservedObject", "@StateObject",
+            "@EnvironmentObject", "@Environment", "@Published",
+            "@FocusState", "@GestureState", "@SceneStorage",
+            "@AppStorage", "@FetchRequest", "@Query"
+        ]
+        
+        // Combine property wrappers
+        let combineWrappers = ["@Published"]
+        
+        // Common third-party wrappers
+        let otherWrappers = [
+            "@Inject", "@Dependency", "@Default", "@UserDefault",
+            "@Persisted", "@Realm"  // Realm
+        ]
+        
+        let allWrappers = swiftUIWrappers + combineWrappers + otherWrappers
+        
+        for wrapper in allWrappers {
+            if nodeText.contains(wrapper) {
+                wrappers.append(wrapper)
+            }
+        }
+        
+        return Array(Set(wrappers))  // Dedupe
     }
     
     private func extractDocComment(for node: some SyntaxProtocol) -> String? {

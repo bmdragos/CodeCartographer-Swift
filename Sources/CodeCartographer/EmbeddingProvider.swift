@@ -51,8 +51,8 @@ final class NLEmbeddingProvider: EmbeddingProvider {
 
 // MARK: - DGX Provider (Local GPU Server)
 
-/// Uses a local DGX/GPU server for embeddings (CodeBERT, BGE, etc.)
-/// Configure with endpoint URL
+/// Uses a local DGX Spark server for embeddings (NV-Embed-v2)
+/// Endpoint format: POST /embed with {"inputs": [...]} → [[...]]
 final class DGXEmbeddingProvider: EmbeddingProvider {
     let endpoint: URL
     let modelName: String
@@ -62,7 +62,13 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
     private let session: URLSession
     private let timeout: TimeInterval
     
-    init(endpoint: URL, modelName: String = "codeBERT", dimensions: Int = 768, timeout: TimeInterval = 30) {
+    /// Initialize DGX embedding provider
+    /// - Parameters:
+    ///   - endpoint: Full URL to the /embed endpoint (e.g., http://192.168.1.159:8080/embed)
+    ///   - modelName: Model name for logging (default: NV-Embed-v2)
+    ///   - dimensions: Output vector dimensions (default: 4096 for NV-Embed-v2)
+    ///   - timeout: Request timeout in seconds
+    init(endpoint: URL, modelName: String = "NV-Embed-v2", dimensions: Int = 4096, timeout: TimeInterval = 60) {
         self.endpoint = endpoint
         self.modelName = modelName
         self.dimensions = dimensions
@@ -78,15 +84,13 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
     }
     
     func embed(_ texts: [String]) throws -> [[Float]] {
-        // Build request
+        // Build request matching our FastAPI server format
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let payload: [String: Any] = [
-            "texts": texts,
-            "model": modelName
-        ]
+        // Server expects: {"inputs": [...]}
+        let payload: [String: Any] = ["inputs": texts]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         
         // Synchronous request (for CLI tool)
@@ -102,17 +106,28 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
                 return
             }
             
+            guard let httpResponse = response as? HTTPURLResponse else {
+                error = EmbeddingError.networkError("Invalid response type")
+                return
+            }
+            
+            guard httpResponse.statusCode == 200 else {
+                let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
+                error = EmbeddingError.networkError("HTTP \(httpResponse.statusCode): \(body)")
+                return
+            }
+            
             guard let data = data else {
                 error = EmbeddingError.networkError("No data received")
                 return
             }
             
             do {
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let embeddings = json["embeddings"] as? [[Double]] {
+                // Server returns array directly: [[...]]
+                if let embeddings = try JSONSerialization.jsonObject(with: data) as? [[Double]] {
                     result = embeddings.map { $0.map { Float($0) } }
                 } else {
-                    error = EmbeddingError.invalidResponse("Unexpected response format")
+                    error = EmbeddingError.invalidResponse("Expected array of arrays")
                 }
             } catch let parseError {
                 error = EmbeddingError.invalidResponse(parseError.localizedDescription)

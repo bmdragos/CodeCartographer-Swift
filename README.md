@@ -6,7 +6,7 @@
 
 **Swift Static Analyzer for AI Coding Assistants**
 
-CodeCartographer is an MCP server that gives AI assistants deep understanding of Swift codebases. It provides 36 analysis tools for code quality, refactoring, and migration planning.
+CodeCartographer is an MCP server that gives AI assistants deep understanding of Swift codebases. It provides 39 analysis tools for code quality, refactoring, semantic search, and migration planning.
 
 ## Quick Start
 
@@ -64,7 +64,7 @@ AI: "Switch to the iOS project"
 → {"status": "switched", "fileCount": 1099}
 ```
 
-## Available Tools (37)
+## Available Tools (39)
 
 ### Core Analysis
 | Tool | Description |
@@ -73,7 +73,7 @@ AI: "Switch to the iOS project"
 | `get_summary` | Project health overview with top issues |
 | `get_architecture_diagram` | Generate Mermaid.js architecture diagram |
 | `analyze_file` | Deep health check for a single file |
-| `set_project` | Switch to a different Swift project |
+| `set_project` | Switch to a different Swift project (supports DGX embeddings) |
 
 ### Code Quality
 | Tool | Description |
@@ -127,6 +127,12 @@ AI: "Switch to the iOS project"
 | `analyze_tests` | Test coverage with target awareness |
 | `find_network_calls` | API endpoints and network patterns |
 
+### Semantic Search
+| Tool | Description |
+|------|-------------|
+| `build_search_index` | Build embedding index for semantic search |
+| `semantic_search` | Natural language code search |
+
 ### Utilities
 | Tool | Description |
 |------|-------------|
@@ -144,6 +150,7 @@ The MCP server is optimized for AI agent workflows:
 - **Result caching** - 29 tools cache results for instant repeated queries
 - **File watching** - Auto-invalidates cache when files change
 - **Smart warmup** - Pre-parses large projects (50+ files) in background
+- **Embedding persistence** - Semantic search index cached to disk
 
 | Project Size | First Query | Cached Query |
 |--------------|-------------|--------------|

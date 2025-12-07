@@ -141,14 +141,21 @@ final class EmbeddingIndex {
             chunkIds: chunkIds,
             chunks: Array(chunks.values),
             providerName: provider.name,
-            dimensions: provider.dimensions
+            dimensions: provider.dimensions,
+            fileHashes: fileHashes,
+            timestamp: Date()
         )
         let encoded = try JSONEncoder().encode(data)
         try encoded.write(to: url)
+        
+        if verbose {
+            let sizeMB = Double(encoded.count) / 1_000_000
+            fputs("[EmbeddingIndex] Saved \(embeddings.count) embeddings (\(String(format: "%.1f", sizeMB)) MB) to \(url.lastPathComponent)\n", stderr)
+        }
     }
     
-    /// Load index from disk
-    func load(from url: URL) throws {
+    /// Load index from disk, returns set of files that changed (need re-embedding)
+    func load(from url: URL, currentHashes: [String: String]) throws -> Set<String> {
         let data = try Data(contentsOf: url)
         let decoded = try JSONDecoder().decode(IndexData.self, from: data)
         
@@ -160,9 +167,45 @@ final class EmbeddingIndex {
             )
         }
         
-        self.embeddings = decoded.embeddings
-        self.chunkIds = decoded.chunkIds
-        self.chunks = Dictionary(uniqueKeysWithValues: decoded.chunks.map { ($0.id, $0) })
+        // Find changed files
+        var changedFiles: Set<String> = []
+        for (file, oldHash) in decoded.fileHashes {
+            if currentHashes[file] != oldHash {
+                changedFiles.insert(file)
+            }
+        }
+        // Also add new files not in cache
+        for file in currentHashes.keys {
+            if decoded.fileHashes[file] == nil {
+                changedFiles.insert(file)
+            }
+        }
+        
+        // Load embeddings for unchanged files only
+        for (i, chunkId) in decoded.chunkIds.enumerated() {
+            if let chunk = decoded.chunks.first(where: { $0.id == chunkId }) {
+                // Skip if file changed
+                if changedFiles.contains(chunk.file) { continue }
+                
+                embeddings.append(decoded.embeddings[i])
+                chunkIds.append(chunkId)
+                chunks[chunkId] = chunk
+            }
+        }
+        
+        // Update file hashes
+        self.fileHashes = currentHashes
+        
+        if verbose {
+            fputs("[EmbeddingIndex] Loaded \(embeddings.count) cached embeddings, \(changedFiles.count) files changed\n", stderr)
+        }
+        
+        return changedFiles
+    }
+    
+    /// Get file hashes (for persistence)
+    func getFileHashes() -> [String: String] {
+        return fileHashes
     }
     
     // MARK: - Math
@@ -200,6 +243,8 @@ struct IndexData: Codable {
     let chunks: [CodeChunk]
     let providerName: String
     let dimensions: Int
+    let fileHashes: [String: String]  // For change detection
+    let timestamp: Date
 }
 
 enum IndexError: Error, LocalizedError {

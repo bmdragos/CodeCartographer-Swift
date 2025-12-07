@@ -1,6 +1,7 @@
 import Foundation
 import SwiftSyntax
 import SwiftParser
+import CommonCrypto
 
 // MARK: - JSON-RPC Types
 
@@ -214,7 +215,32 @@ class MCPServer {
     private var isIndexing = false
     private var indexingProgress: (current: Int, total: Int) = (0, 0)
     private var indexingError: String?
+    private var indexingStartTime: Date?
+    private var indexingEndTime: Date?
+    private var indexingBatchSize: Int = 0
+    private var indexingProvider: String = ""
     private let indexingLock = NSLock()
+    
+    /// Get cache file URL for current project
+    private func getIndexCacheURL() -> URL {
+        // Use ~/.codecartographer/cache/<project-hash>.json
+        let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codecartographer")
+            .appendingPathComponent("cache")
+        
+        // Create directory if needed
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        
+        // Hash project path for filename (SHA256 for uniqueness, no truncation issues)
+        let pathData = projectRoot.path.data(using: .utf8)!
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        pathData.withUnsafeBytes { ptr in
+            _ = CC_SHA256(ptr.baseAddress, CC_LONG(pathData.count), &hash)
+        }
+        let projectHash = hash.map { String(format: "%02x", $0) }.joined()
+        
+        return cacheDir.appendingPathComponent("\(projectHash).json")
+    }
     
     init(projectRoot: URL?, verbose: Bool = false) {
         // Start with provided project or current directory
@@ -224,7 +250,12 @@ class MCPServer {
     }
     
     /// Switch to a different project
-    func setProject(_ path: String) -> (success: Bool, message: String) {
+    /// - Parameters:
+    ///   - path: Absolute path to the project root
+    ///   - provider: Embedding provider: "nlembedding" (default, local Apple) or "dgx" (GPU server)
+    ///   - dgxEndpoint: DGX server endpoint URL (required if provider is "dgx")
+    ///   - batchSize: Optional batch size override for embedding indexing
+    func setProject(_ path: String, provider: String = "nlembedding", dgxEndpoint: String? = nil, batchSize: Int? = nil) -> (success: Bool, message: String) {
         let url = URL(fileURLWithPath: path)
         
         // Verify path exists and is a directory
@@ -232,6 +263,13 @@ class MCPServer {
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
               isDirectory.boolValue else {
             return (false, "Path does not exist or is not a directory: \(path)")
+        }
+        
+        // Validate DGX endpoint if using DGX provider
+        if provider == "dgx" {
+            guard let endpoint = dgxEndpoint, URL(string: endpoint) != nil else {
+                return (false, "DGX provider requires a valid dgx_endpoint URL")
+            }
         }
         
         // Stop watching old project
@@ -252,11 +290,13 @@ class MCPServer {
             }
         }
         
-        // Clear old index and start background indexing
+        // Clear old index and start background indexing with specified provider
         embeddingIndex = nil
-        startBackgroundIndexing()
+        startBackgroundIndexing(providerName: provider, dgxEndpoint: dgxEndpoint, batchSize: batchSize)
         
-        return (true, "Switched to project: \(path) (\(fileCount) Swift files). Background indexing started.")
+        let providerDesc = provider == "dgx" ? "DGX (\(dgxEndpoint ?? ""))" : "NLEmbedding (local)"
+        let batchDesc = batchSize.map { ", batch size: \($0)" } ?? ""
+        return (true, "Switched to project: \(path) (\(fileCount) Swift files). Background indexing started with \(providerDesc)\(batchDesc).")
     }
     
     /// Main server loop - reads from stdin, writes to stdout
@@ -486,7 +526,10 @@ class MCPServer {
                 description: "Switch to a different Swift project. Use this to analyze a different codebase without restarting the server.",
                 inputSchema: MCPInputSchema(
                     properties: [
-                        "path": MCPProperty(type: "string", description: "Absolute path to the Swift project root directory")
+                        "path": MCPProperty(type: "string", description: "Absolute path to the Swift project root directory"),
+                        "provider": MCPProperty(type: "string", description: "Optional: 'nlembedding' (default, local Apple) or 'dgx' (GPU server)"),
+                        "dgx_endpoint": MCPProperty(type: "string", description: "Optional: DGX server endpoint URL (required if provider is 'dgx'), e.g. http://192.168.1.159:8080/embed"),
+                        "batch_size": MCPProperty(type: "integer", description: "Optional: Embedding batch size. Default: 8 for DGX (7B model), 500 for NLEmbedding. Increase for faster indexing if GPU has memory headroom.")
                     ],
                     required: ["path"]
                 )
@@ -805,7 +848,10 @@ class MCPServer {
             guard let path = arguments["path"]?.stringValue else {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: path"])
             }
-            return executeSetProject(path: path)
+            let provider = arguments["provider"]?.stringValue ?? "nlembedding"
+            let dgxEndpoint = arguments["dgx_endpoint"]?.stringValue
+            let batchSize = arguments["batch_size"]?.intValue
+            return executeSetProject(path: path, provider: provider, dgxEndpoint: dgxEndpoint, batchSize: batchSize)
         // Additional analysis tools
         case "find_singletons":
             let path = arguments["path"]?.stringValue
@@ -1314,18 +1360,20 @@ class MCPServer {
         return "{\"status\": \"rescanned\", \"fileCount\": \(cache.fileCount)}"
     }
     
-    private func executeSetProject(path: String) -> String {
-        let result = setProject(path)
+    private func executeSetProject(path: String, provider: String = "nlembedding", dgxEndpoint: String? = nil, batchSize: Int? = nil) -> String {
+        let result = setProject(path, provider: provider, dgxEndpoint: dgxEndpoint, batchSize: batchSize)
         if result.success {
             struct SetProjectResult: Codable {
                 let status: String
                 let project: String
                 let fileCount: Int
+                let embeddingProvider: String
             }
             return encodeToJSON(SetProjectResult(
                 status: "switched",
                 project: path,
-                fileCount: cache.fileCount
+                fileCount: cache.fileCount,
+                embeddingProvider: provider
             ))
         } else {
             struct SetProjectError: Codable {
@@ -1587,8 +1635,12 @@ class MCPServer {
     
     // MARK: - Semantic Search (Background Indexing)
     
-    /// Start background indexing with NLEmbedding (called automatically on project switch)
-    private func startBackgroundIndexing(providerName: String = "nlembedding", dgxEndpoint: String? = nil) {
+    /// Start background indexing (called automatically on project switch)
+    /// - Parameters:
+    ///   - providerName: "nlembedding" or "dgx"
+    ///   - dgxEndpoint: URL for DGX server
+    ///   - batchSize: Optional batch size override. Default: 8 for DGX, 500 for NLEmbedding
+    private func startBackgroundIndexing(providerName: String = "nlembedding", dgxEndpoint: String? = nil, batchSize: Int? = nil) {
         indexingLock.lock()
         // Don't start if already indexing
         if isIndexing {
@@ -1598,6 +1650,10 @@ class MCPServer {
         isIndexing = true
         indexingProgress = (0, 0)
         indexingError = nil
+        indexingStartTime = Date()
+        indexingEndTime = nil
+        indexingProvider = providerName
+        indexingBatchSize = batchSize ?? (providerName.lowercased() == "dgx" ? 8 : 500)
         indexingLock.unlock()
         
         if verbose { fputs("[MCP] Starting background indexing...\n", stderr) }
@@ -1626,7 +1682,7 @@ class MCPServer {
                 // Extract chunks
                 let parsedFiles = self.cache.parsedFiles
                 let extractor = ChunkExtractor(cache: self.cache, verbose: self.verbose)
-                let chunks = extractor.extractChunks(from: parsedFiles)
+                let allChunks = extractor.extractChunks(from: parsedFiles)
                 
                 // Build file hash map
                 var fileHashes: [String: String] = [:]
@@ -1635,25 +1691,67 @@ class MCPServer {
                 }
                 newIndex.setFileHashes(fileHashes)
                 
+                // Try to load from cache
+                let cacheURL = self.getIndexCacheURL()
+                var changedFiles: Set<String> = []
+                var loadedFromCache = false
+                
+                if FileManager.default.fileExists(atPath: cacheURL.path) {
+                    do {
+                        changedFiles = try newIndex.load(from: cacheURL, currentHashes: fileHashes)
+                        loadedFromCache = true
+                        if self.verbose {
+                            fputs("[MCP] Loaded \(newIndex.count) embeddings from cache, \(changedFiles.count) files need re-embedding\n", stderr)
+                        }
+                    } catch {
+                        if self.verbose { fputs("[MCP] Cache load failed: \(error.localizedDescription), rebuilding...\n", stderr) }
+                        changedFiles = Set(fileHashes.keys)  // Re-embed all
+                    }
+                } else {
+                    changedFiles = Set(fileHashes.keys)  // No cache, embed all
+                }
+                
+                // Filter chunks to only those in changed files
+                let chunksToEmbed = loadedFromCache 
+                    ? allChunks.filter { changedFiles.contains($0.file) }
+                    : allChunks
+                
                 // Update total
                 self.indexingLock.lock()
-                self.indexingProgress = (0, chunks.count)
+                self.indexingProgress = (0, chunksToEmbed.count)
                 self.indexingLock.unlock()
                 
-                if self.verbose { fputs("[MCP] Background indexing \(chunks.count) chunks...\n", stderr) }
+                if chunksToEmbed.isEmpty {
+                    if self.verbose { fputs("[MCP] All \(allChunks.count) chunks loaded from cache, no embedding needed!\n", stderr) }
+                } else {
+                    if self.verbose { 
+                        fputs("[MCP] Embedding \(chunksToEmbed.count) chunks (\(allChunks.count - chunksToEmbed.count) cached)...\n", stderr) 
+                    }
+                    
+                    // Index in batches with progress updates
+                    let defaultBatchSize = providerName.lowercased() == "dgx" ? 8 : 500
+                    let actualBatchSize = batchSize ?? defaultBatchSize
+                    self.indexingBatchSize = actualBatchSize
+                    if self.verbose { fputs("[MCP] Using batch size: \(actualBatchSize)\n", stderr) }
+                    
+                    for batchStart in stride(from: 0, to: chunksToEmbed.count, by: actualBatchSize) {
+                        let batchEnd = min(batchStart + actualBatchSize, chunksToEmbed.count)
+                        let batch = Array(chunksToEmbed[batchStart..<batchEnd])
+                        try newIndex.index(batch)
+                        
+                        self.indexingLock.lock()
+                        self.indexingProgress = (batchEnd, chunksToEmbed.count)
+                        self.indexingLock.unlock()
+                        
+                        if self.verbose { fputs("[MCP] Embedded \(batchEnd)/\(chunksToEmbed.count)\n", stderr) }
+                    }
+                }
                 
-                // Index in batches with progress updates
-                let batchSize = 500
-                for batchStart in stride(from: 0, to: chunks.count, by: batchSize) {
-                    let batchEnd = min(batchStart + batchSize, chunks.count)
-                    let batch = Array(chunks[batchStart..<batchEnd])
-                    try newIndex.index(batch)
-                    
-                    self.indexingLock.lock()
-                    self.indexingProgress = (batchEnd, chunks.count)
-                    self.indexingLock.unlock()
-                    
-                    if self.verbose { fputs("[MCP] Background indexed \(batchEnd)/\(chunks.count)\n", stderr) }
+                // Save to cache
+                do {
+                    try newIndex.save(to: cacheURL)
+                } catch {
+                    fputs("[MCP] Warning: Failed to save index cache: \(error.localizedDescription)\n", stderr)
                 }
                 
                 // Done - set the index
@@ -1661,9 +1759,19 @@ class MCPServer {
                 
                 self.indexingLock.lock()
                 self.isIndexing = false
+                self.indexingEndTime = Date()
                 self.indexingLock.unlock()
                 
-                if self.verbose { fputs("[MCP] Background indexing complete!\n", stderr) }
+                // Log completion with timing
+                if let startTime = self.indexingStartTime, let endTime = self.indexingEndTime {
+                    let duration = endTime.timeIntervalSince(startTime)
+                    let minutes = Int(duration) / 60
+                    let seconds = Int(duration) % 60
+                    let cachedCount = allChunks.count - chunksToEmbed.count
+                    fputs("[MCP] Indexing complete! \(allChunks.count) chunks (\(cachedCount) cached, \(chunksToEmbed.count) embedded) in \(minutes)m \(seconds)s (batch=\(self.indexingBatchSize), provider=\(providerName))\n", stderr)
+                } else if self.verbose {
+                    fputs("[MCP] Background indexing complete!\n", stderr)
+                }
                 
             } catch {
                 self.indexingLock.lock()
@@ -1710,12 +1818,31 @@ class MCPServer {
             struct IndexReport: Codable {
                 let status: String
                 let chunksIndexed: Int
+                let durationSeconds: Double?
+                let batchSize: Int?
+                let provider: String?
                 let message: String
             }
+            
+            // Calculate duration if we have timing data
+            var duration: Double? = nil
+            if let start = indexingStartTime, let end = indexingEndTime {
+                duration = end.timeIntervalSince(start)
+            }
+            
+            let durationStr = duration.map { d in
+                let mins = Int(d) / 60
+                let secs = Int(d) % 60
+                return " Indexed in \(mins)m \(secs)s."
+            } ?? ""
+            
             let report = IndexReport(
                 status: "ready",
                 chunksIndexed: index.count,
-                message: "Index already built with \(index.count) chunks. Use semantic_search to query."
+                durationSeconds: duration,
+                batchSize: indexingBatchSize > 0 ? indexingBatchSize : nil,
+                provider: indexingProvider.isEmpty ? nil : indexingProvider,
+                message: "Index ready with \(index.count) chunks.\(durationStr) Use semantic_search to query."
             )
             return encodeToJSON(report)
         }

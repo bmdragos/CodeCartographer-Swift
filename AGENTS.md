@@ -1,6 +1,6 @@
 # CodeCartographer for AI Agents
 
-CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
+CodeCartographer is an MCP server providing 39 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
 
 ## Quick Reference
 
@@ -25,13 +25,13 @@ CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis
 | `suggest_refactoring` | Get extraction suggestions |
 | `read_source` | Read actual code |
 
-## All 37 Tools
+## All 39 Tools
 
 ### Project Management
 | Tool | Description |
 |------|-------------|
 | `get_version` | Version info and current project status |
-| `set_project` | Switch to a different Swift project |
+| `set_project` | Switch to a different Swift project (supports `provider="dgx"`) |
 | `get_summary` | Project health overview |
 | `get_architecture_diagram` | Mermaid.js architecture diagram (see below) |
 | `analyze_file` | Single file health check |
@@ -76,6 +76,12 @@ CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis
 | `analyze_coredata` | Core Data usage |
 | `find_reactive` | RxSwift/Combine subscriptions |
 | `find_network_calls` | API endpoints |
+
+### Semantic Search
+| Tool | Description |
+|------|-------------|
+| `build_search_index` | Build embedding index (local or DGX) |
+| `semantic_search` | Natural language code search |
 
 ### Migration & Quality
 | Tool | Description |
@@ -148,6 +154,21 @@ CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis
    → Concurrency problems
 ```
 
+### Semantic Search (with DGX)
+
+```
+1. set_project("/path/to/project", provider="dgx", dgx_endpoint="http://192.168.1.159:8080/embed", batch_size=48)
+   → Starts background indexing
+2. build_search_index
+   → Check indexing progress
+3. semantic_search("authentication token refresh")
+   → Natural language code search
+4. semantic_search("files that need refactoring")
+   → Finds hotspot chunks (files with quality issues)
+```
+
+**Hotspot chunks:** Files with god functions, 5+ smells, or singletons get special "hotspot" embeddings for quality-focused search.
+
 ## Response Format
 
 All tools return compact JSON. Key fields:
@@ -168,6 +189,7 @@ All tools return compact JSON. Key fields:
 - **Subsequent queries** are instant (cached)
 - **File changes** auto-invalidate cache
 - **set_project** clears cache and switches
+- **Embedding index** persisted to `~/.codecartographer/cache/` (survives restarts)
 
 ## Tips
 
