@@ -200,16 +200,49 @@ struct MCPProperty: Codable {
 // MARK: - MCP Server
 
 class MCPServer {
-    let projectRoot: URL
-    let cache: ASTCache
+    private(set) var projectRoot: URL
+    private(set) var cache: ASTCache
     let verbose: Bool
     
     private var isInitialized = false
     
-    init(projectRoot: URL, verbose: Bool = false) {
-        self.projectRoot = projectRoot
-        self.cache = ASTCache(rootURL: projectRoot)
+    init(projectRoot: URL?, verbose: Bool = false) {
+        // Start with provided project or current directory
+        self.projectRoot = projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        self.cache = ASTCache(rootURL: self.projectRoot)
         self.verbose = verbose
+    }
+    
+    /// Switch to a different project
+    func setProject(_ path: String) -> (success: Bool, message: String) {
+        let url = URL(fileURLWithPath: path)
+        
+        // Verify path exists and is a directory
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return (false, "Path does not exist or is not a directory: \(path)")
+        }
+        
+        // Stop watching old project
+        cache.stopWatching()
+        
+        // Switch to new project
+        projectRoot = url
+        cache = ASTCache(rootURL: url)
+        cache.verbose = verbose
+        cache.scan(verbose: verbose)
+        cache.startWatching()
+        
+        // Background warmup for large projects
+        let fileCount = cache.fileCount
+        if fileCount >= 50 {
+            DispatchQueue.global(qos: .userInitiated).async { [cache, verbose] in
+                cache.warmCache(verbose: verbose)
+            }
+        }
+        
+        return (true, "Switched to project: \(path) (\(fileCount) Swift files)")
     }
     
     /// Main server loop - reads from stdin, writes to stdout
@@ -426,6 +459,16 @@ class MCPServer {
                 name: "rescan_project",
                 description: "Rescan project for new/deleted files",
                 inputSchema: MCPInputSchema()
+            ),
+            MCPTool(
+                name: "set_project",
+                description: "Switch to a different Swift project. Use this to analyze a different codebase without restarting the server.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "path": MCPProperty(type: "string", description: "Absolute path to the Swift project root directory")
+                    ],
+                    required: ["path"]
+                )
             ),
             // Additional analysis tools
             MCPTool(
@@ -699,6 +742,11 @@ class MCPServer {
             return executeInvalidateCache(path: path)
         case "rescan_project":
             return executeRescanProject()
+        case "set_project":
+            guard let path = arguments["path"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: path"])
+            }
+            return executeSetProject(path: path)
         // Additional analysis tools
         case "find_singletons":
             let path = arguments["path"]?.stringValue
@@ -1135,6 +1183,31 @@ class MCPServer {
     private func executeRescanProject() -> String {
         cache.scan(verbose: verbose)
         return "{\"status\": \"rescanned\", \"fileCount\": \(cache.fileCount)}"
+    }
+    
+    private func executeSetProject(path: String) -> String {
+        let result = setProject(path)
+        if result.success {
+            struct SetProjectResult: Codable {
+                let status: String
+                let project: String
+                let fileCount: Int
+            }
+            return encodeToJSON(SetProjectResult(
+                status: "switched",
+                project: path,
+                fileCount: cache.fileCount
+            ))
+        } else {
+            struct SetProjectError: Codable {
+                let status: String
+                let error: String
+            }
+            return encodeToJSON(SetProjectError(
+                status: "error",
+                error: result.message
+            ))
+        }
     }
     
     // MARK: - Additional Tool Implementations
@@ -1656,8 +1729,8 @@ class MCPServer {
 
 // MARK: - Server Entry Point
 
-func runMCPServer(projectPath: String, verbose: Bool) {
-    let projectURL = URL(fileURLWithPath: projectPath)
+func runMCPServer(projectPath: String?, verbose: Bool) {
+    let projectURL = projectPath.map { URL(fileURLWithPath: $0) }
     let server = MCPServer(projectRoot: projectURL, verbose: verbose)
     server.run()
 }

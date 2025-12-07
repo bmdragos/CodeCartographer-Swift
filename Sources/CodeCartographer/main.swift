@@ -173,11 +173,12 @@ func main() {
     
     // MCP Server mode
     if args.count >= 2 && args[1] == "serve" {
-        let projectPath: String
+        // Project path is optional - can switch projects dynamically with set_project tool
+        let projectPath: String?
         if args.count >= 3 && !args[2].hasPrefix("-") {
             projectPath = args[2]
         } else {
-            projectPath = FileManager.default.currentDirectoryPath
+            projectPath = nil  // Start without a project, use set_project to switch
         }
         
         let verbose = args.contains("--verbose")
