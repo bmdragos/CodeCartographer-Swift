@@ -56,7 +56,7 @@ CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis
 | `suggest_refactoring` | Extraction opportunities |
 | `get_refactor_detail` | Ready-to-paste extracted function |
 | `check_impact` | Blast radius for symbol changes |
-| `track_property` | Find property accesses |
+| `track_property` | Find property accesses (supports `filterProperty` for targeted queries) |
 | `find_calls` | Find method call patterns |
 
 ### Architecture
@@ -120,15 +120,20 @@ CodeCartographer is an MCP server providing 37 tools for Swift codebase analysis
 ### Migration Planning
 
 ```
-1. track_property("LegacyManager.*")
-   → Find all usages
-2. find_calls("*.deprecatedMethod")
-   → Find method calls to migrate
-3. check_impact("LegacyManager")
-   → Blast radius
+1. track_property("Account.*", filterProperty: "*Token")
+   → Find all token-related accesses (74 hits)
+2. track_property("Account.*", filterProperty: "email")
+   → Find specific property accesses
+3. check_impact("AuthManager")
+   → See what's already migrated
 4. generate_migration_checklist
    → Phased plan
 ```
+
+**filterProperty wildcards:**
+- `*Token` → suffix match (accessToken, refreshToken, etc.)
+- `token*` → prefix match
+- `tokens` → exact match
 
 ### Code Review
 
