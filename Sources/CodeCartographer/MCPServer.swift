@@ -417,7 +417,7 @@ class MCPServer {
                 inputSchema: MCPInputSchema(
                     properties: [
                         "pattern": MCPProperty(type: "string", description: "Property pattern to track (e.g., 'Account.*')"),
-                        "filterProperty": MCPProperty(type: "string", description: "Filter to specific property name (e.g., 'tokens', 'email', 'token*' for prefix match)")
+                        "filterProperty": MCPProperty(type: "string", description: "Filter to specific property name (e.g., 'tokens', 'email', 'token*' for prefix match, '*Token' for suffix match)")
                     ],
                     required: ["pattern"]
                 )
