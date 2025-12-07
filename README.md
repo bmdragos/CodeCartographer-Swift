@@ -6,7 +6,7 @@
 
 **Swift Static Analyzer for AI Coding Assistants**
 
-CodeCartographer is an MCP server that gives AI assistants deep understanding of Swift codebases. It provides 35 analysis tools for code quality, refactoring, and migration planning.
+CodeCartographer is an MCP server that gives AI assistants deep understanding of Swift codebases. It provides 36 analysis tools for code quality, refactoring, and migration planning.
 
 ## Quick Start
 
@@ -64,11 +64,12 @@ AI: "Switch to the iOS project"
 → {"status": "switched", "fileCount": 1099}
 ```
 
-## Available Tools (35)
+## Available Tools (36)
 
 ### Core Analysis
 | Tool | Description |
 |------|-------------|
+| `get_version` | Version info and current project status |
 | `get_summary` | Project health overview with top issues |
 | `analyze_file` | Deep health check for a single file |
 | `set_project` | Switch to a different Swift project |

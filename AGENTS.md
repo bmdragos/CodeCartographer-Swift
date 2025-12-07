@@ -1,6 +1,6 @@
 # CodeCartographer for AI Agents
 
-CodeCartographer is an MCP server providing 35 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
+CodeCartographer is an MCP server providing 36 tools for Swift codebase analysis. This guide helps AI coding assistants use it effectively.
 
 ## Quick Reference
 
@@ -25,11 +25,12 @@ CodeCartographer is an MCP server providing 35 tools for Swift codebase analysis
 | `suggest_refactoring` | Get extraction suggestions |
 | `read_source` | Read actual code |
 
-## All 35 Tools
+## All 36 Tools
 
 ### Project Management
 | Tool | Description |
 |------|-------------|
+| `get_version` | Version info and current project status |
 | `set_project` | Switch to a different Swift project |
 | `get_summary` | Project health overview |
 | `analyze_file` | Single file health check |
