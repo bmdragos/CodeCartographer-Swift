@@ -206,6 +206,10 @@ class MCPServer {
     
     private var isInitialized = false
     
+    // Semantic search
+    private var embeddingIndex: EmbeddingIndex?
+    private var embeddingProvider: EmbeddingProvider?
+    
     init(projectRoot: URL?, verbose: Bool = false) {
         // Start with provided project or current directory
         self.projectRoot = projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -588,6 +592,27 @@ class MCPServer {
                 )
             ),
             MCPTool(
+                name: "build_search_index",
+                description: "Build or rebuild the semantic search index for the project. Uses NLEmbedding by default. Call this before using semantic_search.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "provider": MCPProperty(type: "string", description: "Optional: 'nlembedding' (default) or 'dgx'"),
+                        "dgx_endpoint": MCPProperty(type: "string", description: "Optional: DGX server endpoint URL (required if provider is 'dgx')")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "semantic_search",
+                description: "Search the codebase using natural language. Returns the most relevant code chunks. Requires build_search_index to be called first.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "query": MCPProperty(type: "string", description: "Natural language search query (e.g., 'authentication logic', 'network error handling')"),
+                        "top_k": MCPProperty(type: "integer", description: "Optional: number of results to return (default: 10)")
+                    ],
+                    required: ["query"]
+                )
+            ),
+            MCPTool(
                 name: "analyze_swiftui",
                 description: "Analyze SwiftUI patterns and state management (@State, @Binding, etc.)",
                 inputSchema: MCPInputSchema(
@@ -809,6 +834,16 @@ class MCPServer {
             let path = arguments["path"]?.stringValue
             let kind = arguments["kind"]?.stringValue
             return try executeExtractChunks(path: path, kind: kind)
+        case "build_search_index":
+            let provider = arguments["provider"]?.stringValue ?? "nlembedding"
+            let dgxEndpoint = arguments["dgx_endpoint"]?.stringValue
+            return try executeBuildSearchIndex(provider: provider, dgxEndpoint: dgxEndpoint)
+        case "semantic_search":
+            guard let query = arguments["query"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: query"])
+            }
+            let topK = arguments["top_k"]?.intValue ?? 10
+            return try executeSemanticSearch(query: query, topK: topK)
         case "analyze_swiftui":
             let path = arguments["path"]?.stringValue
             return try executeAnalyzeSwiftUI(path: path)
@@ -1538,6 +1573,113 @@ class MCPServer {
         let result = encodeToJSON(report)
         cache.cacheResult(result, for: cacheKey)
         return result
+    }
+    
+    // MARK: - Semantic Search
+    
+    private func executeBuildSearchIndex(provider: String, dgxEndpoint: String?) throws -> String {
+        if verbose { fputs("[MCP] Building search index with provider: \(provider)\n", stderr) }
+        
+        // Create embedding provider
+        let embeddingProvider: EmbeddingProvider
+        switch provider.lowercased() {
+        case "nlembedding":
+            embeddingProvider = try NLEmbeddingProvider()
+        case "dgx":
+            guard let endpoint = dgxEndpoint, let url = URL(string: endpoint) else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "DGX provider requires dgx_endpoint URL"])
+            }
+            embeddingProvider = DGXEmbeddingProvider(endpoint: url)
+        default:
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unknown provider: \(provider). Use 'nlembedding' or 'dgx'"])
+        }
+        
+        self.embeddingProvider = embeddingProvider
+        self.embeddingIndex = EmbeddingIndex(provider: embeddingProvider)
+        
+        // Extract all chunks
+        let parsedFiles = cache.parsedFiles
+        let extractor = ChunkExtractor()
+        let chunks = extractor.extractChunks(from: parsedFiles)
+        
+        if verbose { fputs("[MCP] Indexing \(chunks.count) chunks...\n", stderr) }
+        
+        // Index in batches to show progress
+        let batchSize = 100
+        var indexed = 0
+        for batchStart in stride(from: 0, to: chunks.count, by: batchSize) {
+            let batchEnd = min(batchStart + batchSize, chunks.count)
+            let batch = Array(chunks[batchStart..<batchEnd])
+            try embeddingIndex?.index(batch)
+            indexed += batch.count
+            if verbose { fputs("[MCP] Indexed \(indexed)/\(chunks.count) chunks\n", stderr) }
+        }
+        
+        struct IndexReport: Codable {
+            let status: String
+            let provider: String
+            let dimensions: Int
+            let chunksIndexed: Int
+            let message: String
+        }
+        
+        let report = IndexReport(
+            status: "success",
+            provider: embeddingProvider.name,
+            dimensions: embeddingProvider.dimensions,
+            chunksIndexed: chunks.count,
+            message: "Index built successfully. Use semantic_search to query."
+        )
+        
+        return encodeToJSON(report)
+    }
+    
+    private func executeSemanticSearch(query: String, topK: Int) throws -> String {
+        guard let index = embeddingIndex, !index.isEmpty else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Search index not built. Call build_search_index first."])
+        }
+        
+        if verbose { fputs("[MCP] Searching for: \(query)\n", stderr) }
+        
+        let results = try index.search(query: query, topK: topK)
+        
+        struct SearchReport: Codable {
+            let query: String
+            let resultsCount: Int
+            let results: [SearchResultItem]
+        }
+        
+        struct SearchResultItem: Codable {
+            let score: Float
+            let file: String
+            let line: Int
+            let name: String
+            let kind: String
+            let signature: String
+            let layer: String
+            let embeddingText: String
+        }
+        
+        let items = results.map { result in
+            SearchResultItem(
+                score: result.score,
+                file: result.chunk.file,
+                line: result.chunk.line,
+                name: result.chunk.name,
+                kind: result.chunk.kind.rawValue,
+                signature: result.chunk.signature,
+                layer: result.chunk.layer,
+                embeddingText: result.chunk.embeddingText
+            )
+        }
+        
+        let report = SearchReport(
+            query: query,
+            resultsCount: results.count,
+            results: items
+        )
+        
+        return encodeToJSON(report)
     }
     
     private func executeAnalyzeSwiftUI(path: String?) throws -> String {
