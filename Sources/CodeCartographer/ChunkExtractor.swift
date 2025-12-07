@@ -33,7 +33,7 @@ struct CodeChunk: Codable {
     let conformsTo: [String]        // protocols (for types)
     
     // Metrics
-    let complexity: Int
+    let complexity: Int?  // nil for types (only applies to functions)
     let lineCount: Int
     let visibility: Visibility
     
@@ -80,7 +80,11 @@ struct CodeChunk: Codable {
         }
         
         // Metrics
-        parts.append("Complexity: \(complexity), Lines: \(lineCount)")
+        if let complexity = complexity {
+            parts.append("Complexity: \(complexity), Lines: \(lineCount)")
+        } else {
+            parts.append("Lines: \(lineCount)")
+        }
         
         return parts.joined(separator: "\n")
     }
@@ -351,7 +355,7 @@ final class ChunkVisitor: SyntaxVisitor {
             calledBy: [],
             usesTypes: conformsTo,
             conformsTo: conformsTo,
-            complexity: 1,
+            complexity: nil,  // Types don't have cyclomatic complexity
             lineCount: endLine - startLine + 1,
             visibility: visibility,
             isSingleton: isSingleton,
@@ -395,17 +399,21 @@ final class ChunkVisitor: SyntaxVisitor {
             usesTypes = callVisitor.types
         }
         
-        // Calculate complexity (simplified)
-        let bodyText = node.body?.description ?? ""
-        let complexity = calculateComplexity(bodyText)
+        // Calculate complexity using proper AST visitor
+        var complexity = 1  // Base complexity
+        if let body = node.body {
+            let complexityVisitor = ComplexityVisitor(viewMode: .sourceAccurate)
+            complexityVisitor.walk(body)
+            complexity += complexityVisitor.complexity
+        }
         
         // Extract keywords
         var keywords = extractKeywords(from: name)
         keywords.append(contentsOf: parameters.flatMap { extractKeywords(from: $0) })
         keywords = Array(Set(keywords))  // dedupe
         
-        // Check for smells
-        let hasSmells = bodyText.contains("!") || bodyText.contains("as!")
+        let bodyText = node.body?.description ?? ""
+        let hasSmells = bodyText.contains("!") && !bodyText.contains("!=")  // Force unwrap, not inequality
         
         // Module path
         let modulePath = extractModulePath(from: filePath)
