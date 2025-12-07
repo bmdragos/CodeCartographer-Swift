@@ -1538,7 +1538,7 @@ class MCPServer {
         }
         
         let parsedFiles = try getParsedFiles(for: path)
-        let extractor = ChunkExtractor()
+        let extractor = ChunkExtractor(cache: cache, verbose: verbose)
         var chunks = extractor.extractChunks(from: parsedFiles)
         
         // Filter by kind if specified
@@ -1597,9 +1597,9 @@ class MCPServer {
         self.embeddingProvider = embeddingProvider
         self.embeddingIndex = EmbeddingIndex(provider: embeddingProvider)
         
-        // Extract all chunks
+        // Extract all chunks (uses findings cache for speed)
         let parsedFiles = cache.parsedFiles
-        let extractor = ChunkExtractor()
+        let extractor = ChunkExtractor(cache: cache, verbose: verbose)
         let chunks = extractor.extractChunks(from: parsedFiles)
         
         if verbose { fputs("[MCP] Indexing \(chunks.count) chunks...\n", stderr) }

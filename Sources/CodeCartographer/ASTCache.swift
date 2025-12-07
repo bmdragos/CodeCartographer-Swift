@@ -77,6 +77,12 @@ public final class ASTCache {
     private var resultCacheValid = false
     private let resultLock = NSLock()
     
+    // Per-file analyzer findings cache
+    // Key: relativePath, Value: (contentHash, findings)
+    // Only valid if contentHash matches current file
+    private var findingsCache: [String: (hash: String, findings: FileFindings)] = [:]
+    private let findingsLock = NSLock()
+    
     public init(rootURL: URL) {
         self.rootURL = rootURL
     }
@@ -253,6 +259,42 @@ public final class ASTCache {
         }
         resultCache.removeAll()
         resultCacheValid = false
+    }
+    
+    // MARK: - Per-File Analyzer Findings Cache
+    
+    /// Get cached findings for a file (returns nil if not cached or file changed)
+    public func getFindings(for file: ParsedFile) -> FileFindings? {
+        findingsLock.lock()
+        defer { findingsLock.unlock() }
+        
+        guard let cached = findingsCache[file.relativePath],
+              cached.hash == file.contentHash else {
+            return nil
+        }
+        return cached.findings
+    }
+    
+    /// Cache findings for a file
+    public func cacheFindings(_ findings: FileFindings, for file: ParsedFile) {
+        findingsLock.lock()
+        defer { findingsLock.unlock() }
+        
+        findingsCache[file.relativePath] = (file.contentHash, findings)
+    }
+    
+    /// Get findings cache stats
+    public var findingsCacheStats: (cached: Int, total: Int) {
+        findingsLock.lock()
+        defer { findingsLock.unlock() }
+        return (findingsCache.count, files.count)
+    }
+    
+    /// Clear findings cache (called when project changes)
+    public func invalidateFindingsCache() {
+        findingsLock.lock()
+        defer { findingsLock.unlock() }
+        findingsCache.removeAll()
     }
     
     // MARK: - Parallel Parsing

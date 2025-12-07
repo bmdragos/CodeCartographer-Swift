@@ -126,11 +126,13 @@ struct CodeChunk: Codable {
 
 // MARK: - File Findings (from existing analyzers)
 
-struct FileFindings {
-    var singletonLines: Set<Int> = []
-    var reactiveLines: Set<Int> = []
-    var networkLines: Set<Int> = []
-    var delegateLines: Set<Int> = []
+public struct FileFindings {
+    public var singletonLines: Set<Int> = []
+    public var reactiveLines: Set<Int> = []
+    public var networkLines: Set<Int> = []
+    public var delegateLines: Set<Int> = []
+    
+    public init() {}
     
     func hasPattern(_ pattern: PatternType, inRange startLine: Int, endLine: Int) -> Bool {
         let lines: Set<Int>
@@ -151,12 +153,30 @@ struct FileFindings {
 // MARK: - Chunk Extractor
 
 class ChunkExtractor {
+    private let cache: ASTCache?
+    private let verbose: Bool
+    
+    init(cache: ASTCache? = nil, verbose: Bool = false) {
+        self.cache = cache
+        self.verbose = verbose
+    }
     
     func extractChunks(from parsedFiles: [ParsedFile]) -> [CodeChunk] {
-        // Step 1: Pre-compute findings using existing visitors (reuses parsed ASTs)
+        // Step 1: Pre-compute findings using existing visitors (with caching)
         var findingsByFile: [String: FileFindings] = [:]
+        var cacheHits = 0
+        var cacheMisses = 0
         
         for file in parsedFiles {
+            // Check cache first
+            if let cachedFindings = cache?.getFindings(for: file) {
+                findingsByFile[file.relativePath] = cachedFindings
+                cacheHits += 1
+                continue
+            }
+            
+            // Compute findings (cache miss)
+            cacheMisses += 1
             var findings = FileFindings()
             
             // Singleton analysis (uses FileAnalyzer)
@@ -179,7 +199,13 @@ class ChunkExtractor {
             delegateVisitor.walk(file.ast)
             findings.delegateLines = Set(delegateVisitor.wirings.compactMap { $0.line })
             
+            // Cache the findings
+            cache?.cacheFindings(findings, for: file)
             findingsByFile[file.relativePath] = findings
+        }
+        
+        if verbose {
+            fputs("[ChunkExtractor] Findings cache: \(cacheHits) hits, \(cacheMisses) misses\n", stderr)
         }
         
         // Step 2: Extract chunks with enriched patterns
