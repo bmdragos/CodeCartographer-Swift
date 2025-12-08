@@ -149,6 +149,7 @@ Semantic search is powered by AST-aware chunking. Each chunk is embedded with ri
 | `hotspot` | Files with quality issues | `hotspot:AuthManager.swift` |
 | `fileSummary` | Aggregated file metadata | `summary:AuthManager.swift` |
 | `cluster` | Groups of related files | `cluster:protocol:APIService` |
+| `typeSummary` | Type aggregated across extensions | `typeSummary:AuthManager` |
 
 ### What's Embedded
 
@@ -164,6 +165,7 @@ Attributes: @MainActor
 Patterns: async-await, reactive
 Conforms to: ObservableObject
 Calls: cognitoService.authenticate, sessionService.login
+Called by: AppDelegate.restoreSession, LoginViewModel.login
 Complexity: 12
 Lines: 420
 ```
@@ -185,6 +187,12 @@ Lines: 420
 **Clusters** — Groups of related files:
 - **Protocol clusters**: Files implementing the same protocol (cross-directory)
 - **Directory clusters**: Files in the same module path
+
+**Type Summaries** — One per type, aggregating across extensions:
+- All files where type is defined or extended
+- Total method count (public vs private)
+- All protocol conformances
+- Key public methods
 
 ### Utilities
 | Tool | Description |

@@ -169,9 +169,13 @@ CodeCartographer is an MCP server providing 40 tools for Swift codebase analysis
 ```
 
 **Chunk types indexed:**
+- **Methods/Functions** - Include `calls` (outbound) and `calledBy` (inbound) for bidirectional traversal
 - **Hotspots** - Files with god functions, 5+ smells, or singletons
 - **File summaries** - One chunk per file with aggregated metadata
+- **Type summaries** - Type aggregated across all extensions (files, methods, conformances)
 - **Clusters** - Groups of related files by module path
+
+**Bidirectional call graph:** Each method chunk has `calledBy` field showing all callers. Use `extract_chunks` for instant lookup without semantic search.
 
 **Query refinement:** Use `similar_to(chunk_id)` to find related code based on a previous search result.
 
