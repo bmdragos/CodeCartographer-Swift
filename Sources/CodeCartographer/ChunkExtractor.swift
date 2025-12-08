@@ -305,7 +305,7 @@ class ChunkExtractor {
                 docComment: chunk.docComment,
                 purpose: chunk.purpose,
                 calls: chunk.calls,
-                calledBy: calledByMap[chunkId] ?? [],
+                calledBy: calledByMap[chunkId] ?? calledByMap[chunk.name] ?? [],
                 usesTypes: chunk.usesTypes,
                 conformsTo: chunk.conformsTo,
                 complexity: chunk.complexity,
