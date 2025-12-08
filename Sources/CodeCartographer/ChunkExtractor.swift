@@ -278,10 +278,24 @@ class ChunkExtractor {
         }
         
         // Second pass: fill in "calledBy" relationships
+        // Normalize call strings to extract just the method name
+        func normalizeCall(_ call: String) -> String {
+            var s = call
+            // Strip leading dot (enum cases like ".loginRequested")
+            if s.hasPrefix(".") { s = String(s.dropFirst()) }
+            // Extract just the method name from "instance.method" or "Type.method"
+            if let dot = s.lastIndex(of: ".") {
+                s = String(s[s.index(after: dot)...])
+            }
+            return s
+        }
+        
         var calledByMap: [String: [String]] = [:]
         for (caller, callees) in callGraph {
             for callee in callees {
-                calledByMap[callee, default: []].append(caller)
+                // Store under normalized key (just the method name)
+                let normalizedCallee = normalizeCall(callee)
+                calledByMap[normalizedCallee, default: []].append(caller)
             }
         }
         
