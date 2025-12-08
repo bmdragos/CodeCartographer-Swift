@@ -126,6 +126,7 @@ public struct CodeChunk: Codable {
         case hotspot  // File-level health/quality summary
         case fileSummary  // File-level overview (all files)
         case cluster  // Group of related files
+        case typeSummary  // Type-level overview across all extensions
     }
     
     public enum Visibility: String, Codable {
@@ -330,12 +331,20 @@ class ChunkExtractor {
         let fileSummaryChunks = generateFileSummaryChunks(from: allChunks, parsedFiles: parsedFiles)
         allChunks.append(contentsOf: fileSummaryChunks)
         
+        // Create TypeMap once for cluster and type summary generation
+        let graphAnalyzer = DependencyGraphAnalyzer()
+        let typeMap = graphAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
+        
         // Step 5: Generate cluster chunks (groups of related files)
-        let clusterChunks = generateClusterChunks(from: allChunks, parsedFiles: parsedFiles)
+        let clusterChunks = generateClusterChunks(from: allChunks, parsedFiles: parsedFiles, typeMap: typeMap)
         allChunks.append(contentsOf: clusterChunks)
         
+        // Step 6: Generate type summary chunks (aggregate across extensions)
+        let typeSummaryChunks = generateTypeSummaryChunks(from: allChunks, typeMap: typeMap)
+        allChunks.append(contentsOf: typeSummaryChunks)
+        
         if verbose {
-            fputs("[ChunkExtractor] Added \(hotspotChunks.count) hotspot, \(fileSummaryChunks.count) summary, \(clusterChunks.count) cluster chunks\n", stderr)
+            fputs("[ChunkExtractor] Added \(hotspotChunks.count) hotspot, \(fileSummaryChunks.count) summary, \(clusterChunks.count) cluster, \(typeSummaryChunks.count) typeSummary chunks\n", stderr)
         }
         
         return allChunks
@@ -557,12 +566,8 @@ class ChunkExtractor {
     }
     
     /// Generate cluster chunks using DependencyGraphAnalyzer for smarter grouping
-    private func generateClusterChunks(from chunks: [CodeChunk], parsedFiles: [ParsedFile]) -> [CodeChunk] {
+    private func generateClusterChunks(from chunks: [CodeChunk], parsedFiles: [ParsedFile], typeMap: TypeMap) -> [CodeChunk] {
         var clusters: [CodeChunk] = []
-        
-        // Use DependencyGraphAnalyzer for real coupling data
-        let graphAnalyzer = DependencyGraphAnalyzer()
-        let typeMap = graphAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
         
         // Standard library imports to ignore for clustering
         let standardImports: Set<String> = ["Foundation", "UIKit", "SwiftUI", "Combine", "Swift"]
@@ -681,6 +686,115 @@ class ChunkExtractor {
         }
         
         return clusters
+    }
+    
+    /// Generate type summary chunks aggregating across all extensions
+    private func generateTypeSummaryChunks(from chunks: [CodeChunk], typeMap: TypeMap) -> [CodeChunk] {
+        var summaries: [CodeChunk] = []
+        
+        // Group definitions by type name (includes base type + extensions)
+        var typeFiles: [String: Set<String>] = [:]
+        var typeConformances: [String: Set<String>] = [:]
+        var typeKinds: [String: TypeDefinition.TypeKind] = [:]
+        
+        for def in typeMap.definitions {
+            typeFiles[def.name, default: []].insert(def.file)
+            typeConformances[def.name, default: []].formUnion(def.conformances)
+            // Store the kind of the base type (not extension)
+            if def.kind != .extension {
+                typeKinds[def.name] = def.kind
+            }
+        }
+        
+        // Count methods per type from chunks
+        var typeMethods: [String: (total: Int, publicCount: Int, keyMethods: [String])] = [:]
+        for chunk in chunks where chunk.kind == .method || chunk.kind == .function || chunk.kind == .initializer {
+            guard let parent = chunk.parentType else { continue }
+            var current = typeMethods[parent] ?? (total: 0, publicCount: 0, keyMethods: [])
+            current.total += 1
+            if chunk.visibility == .public || chunk.visibility == .open {
+                current.publicCount += 1
+                if current.keyMethods.count < 5 {
+                    current.keyMethods.append(chunk.name)
+                }
+            }
+            typeMethods[parent] = current
+        }
+        
+        // Get imports and attributes per type
+        var typeImports: [String: Set<String>] = [:]
+        var typeAttributes: [String: Set<String>] = [:]
+        for chunk in chunks {
+            guard let parent = chunk.parentType else { continue }
+            typeImports[parent, default: []].formUnion(chunk.imports)
+            typeAttributes[parent, default: []].formUnion(chunk.attributes)
+        }
+        
+        // Create TypeSummary chunk for each unique type (skip protocols for now)
+        for (typeName, files) in typeFiles {
+            let kind = typeKinds[typeName]
+            // Skip protocols - they don't have implementations to aggregate
+            guard kind != .protocol else { continue }
+            
+            let uniqueFiles = Array(files).sorted()
+            let conformances = Array(typeConformances[typeName] ?? []).sorted()
+            let methods = typeMethods[typeName] ?? (total: 0, publicCount: 0, keyMethods: [])
+            let imports = Array(typeImports[typeName] ?? []).sorted()
+            let attributes = Array(typeAttributes[typeName] ?? []).sorted()
+            
+            // Build purpose string
+            var purposeParts: [String] = []
+            if uniqueFiles.count > 1 {
+                let fileNames = uniqueFiles.map { ($0 as NSString).lastPathComponent }
+                purposeParts.append("\(uniqueFiles.count) files: \(fileNames.joined(separator: ", "))")
+            }
+            purposeParts.append("\(methods.total) methods (\(methods.publicCount) public)")
+            if !conformances.isEmpty {
+                purposeParts.append("Conforms to: \(conformances.prefix(5).joined(separator: ", "))")
+            }
+            if !methods.keyMethods.isEmpty {
+                purposeParts.append("Key: \(methods.keyMethods.joined(separator: ", "))")
+            }
+            
+            // Determine layer from first file chunk
+            let typeChunks = chunks.filter { $0.parentType == typeName }
+            let layer = typeChunks.first?.layer ?? "unknown"
+            
+            let summary = CodeChunk(
+                id: "typeSummary:\(typeName)",
+                file: typeMap.typeToFile[typeName] ?? uniqueFiles.first ?? "unknown",
+                line: 1,
+                endLine: 1,
+                name: typeName,
+                kind: .typeSummary,
+                parentType: nil,
+                modulePath: typeName,
+                signature: "TypeSummary: \(typeName)",
+                parameters: [],
+                returnType: nil,
+                docComment: nil,
+                purpose: purposeParts.joined(separator: ". "),
+                calls: [],
+                calledBy: [],
+                usesTypes: [],
+                conformsTo: conformances,
+                complexity: nil,
+                lineCount: methods.total,
+                visibility: .public,
+                isSingleton: false,
+                hasSmells: false,
+                hasTodo: false,
+                attributes: attributes,
+                propertyWrappers: [],
+                keywords: ["type", "summary", typeName.lowercased()],
+                layer: layer,
+                imports: imports,
+                patterns: []
+            )
+            summaries.append(summary)
+        }
+        
+        return summaries
     }
     
     private func extractImports(from ast: SourceFileSyntax) -> [String] {
