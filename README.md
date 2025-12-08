@@ -134,6 +134,58 @@ AI: "Switch to the iOS project"
 | `semantic_search` | Natural language code search |
 | `similar_to` | Find chunks similar to a search result |
 
+## Chunk Architecture
+
+Semantic search is powered by AST-aware chunking. Each chunk is embedded with rich metadata for high-quality retrieval.
+
+### Chunk Types
+
+| Kind | Description | Example ID |
+|------|-------------|------------|
+| `class`, `struct`, `enum`, `protocol` | Type definitions | `AuthManager.swift:10` |
+| `function`, `method`, `initializer` | Callable code | `AuthManager.swift:65` |
+| `property` | Stored/computed properties | `AuthManager.swift:42` |
+| `extension` | Type extensions | `String+Helpers.swift:5` |
+| `hotspot` | Files with quality issues | `hotspot:AuthManager.swift` |
+| `fileSummary` | Aggregated file metadata | `summary:AuthManager.swift` |
+| `cluster` | Groups of related files | `cluster:protocol:APIService` |
+
+### What's Embedded
+
+Each chunk includes:
+
+```
+Name: AuthManager
+Signature: class AuthManager
+Purpose: Orchestrates authentication operations...
+Layer: business-logic
+Imports: Foundation, Combine
+Attributes: @MainActor
+Patterns: async-await, reactive
+Conforms to: ObservableObject
+Calls: cognitoService.authenticate, sessionService.login
+Complexity: 12
+Lines: 420
+```
+
+### Special Chunk Types
+
+**Hotspots** — Files flagged for quality issues:
+- God functions (>50 lines or complexity >10)
+- Code smells (force unwraps, magic numbers, deep nesting)
+- Singletons
+- TODOs/FIXMEs
+
+**File Summaries** — One per file, aggregating:
+- Type count and names
+- Method count (public vs private)
+- Protocol conformances
+- Key attributes (@MainActor, @Observable)
+
+**Clusters** — Groups of related files:
+- **Protocol clusters**: Files implementing the same protocol (cross-directory)
+- **Directory clusters**: Files in the same module path
+
 ### Utilities
 | Tool | Description |
 |------|-------------|
