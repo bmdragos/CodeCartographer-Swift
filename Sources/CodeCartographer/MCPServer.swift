@@ -221,6 +221,9 @@ class MCPServer {
     private var indexingProvider: String = ""
     private let indexingLock = NSLock()
     
+    // Pending file changes during indexing (processed after indexing completes)
+    private var pendingFileChanges: Set<String> = []
+    
     /// Get cache file URL for current project
     private func getIndexCacheURL() -> URL {
         // Use ~/.codecartographer/cache/<project-hash>.json
@@ -1795,6 +1798,19 @@ class MCPServer {
                     fputs("[MCP] Background indexing complete!\n", stderr)
                 }
                 
+                // Process any file changes that occurred during indexing
+                self.indexingLock.lock()
+                let pending = self.pendingFileChanges
+                self.pendingFileChanges.removeAll()
+                self.indexingLock.unlock()
+                
+                if !pending.isEmpty {
+                    if self.verbose {
+                        fputs("[MCP] Processing \(pending.count) queued file changes...\n", stderr)
+                    }
+                    self.handleFilesChanged(pending)
+                }
+                
             } catch {
                 self.indexingLock.lock()
                 self.isIndexing = false
@@ -1818,9 +1834,17 @@ class MCPServer {
         guard !changedFiles.isEmpty else { return }
         guard let index = embeddingIndex, !index.isEmpty else { return }
         
-        // Don't re-embed if a full indexing is in progress
+        // Queue changes if full indexing is in progress (will process after)
         let status = getIndexingStatus()
-        if status.isIndexing { return }
+        if status.isIndexing {
+            indexingLock.lock()
+            pendingFileChanges.formUnion(changedFiles)
+            indexingLock.unlock()
+            if verbose {
+                fputs("[MCP] Queued \(changedFiles.count) file changes (indexing in progress)\n", stderr)
+            }
+            return
+        }
         
         if verbose {
             fputs("[MCP] Files changed: \(changedFiles.joined(separator: ", "))\n", stderr)
