@@ -1679,6 +1679,7 @@ class MCPServer {
         indexingEndTime = nil
         indexingProvider = providerName
         indexingBatchSize = batchSize ?? (providerName.lowercased() == "dgx" ? 8 : 500)
+        pendingFileChanges.removeAll()  // Clear any stale file changes from before indexing
         indexingLock.unlock()
         
         if verbose { fputs("[MCP] Starting background indexing...\n", stderr) }
