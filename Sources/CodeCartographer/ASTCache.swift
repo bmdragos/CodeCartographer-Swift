@@ -71,6 +71,10 @@ public final class ASTCache {
     private var debounceWorkItem: DispatchWorkItem?
     public var verbose: Bool = false
     
+    /// Callback when files change (for incremental re-embedding)
+    /// Set<String> contains relative paths of changed/added/deleted files
+    public var onFilesChanged: ((Set<String>) -> Void)?
+    
     // Result caching - stores tool results keyed by tool name
     // Invalidated when any file changes
     private var resultCache: [String: String] = [:]  // toolKey -> JSON result
@@ -508,6 +512,9 @@ public final class ASTCache {
                 }
             }
         }
+        
+        // Notify listener of changed files (for incremental re-embedding)
+        onFilesChanged?(paths)
     }
 }
 

@@ -86,6 +86,42 @@ final class EmbeddingIndex {
         chunks = [:]
     }
     
+    /// Remove all chunks belonging to specific files
+    /// Returns the number of chunks removed
+    @discardableResult
+    func removeChunksForFiles(_ files: Set<String>) -> Int {
+        guard !files.isEmpty else { return 0 }
+        
+        // Find indices to remove (in reverse order for safe removal)
+        var indicesToRemove: [Int] = []
+        for (i, chunkId) in chunkIds.enumerated() {
+            if let chunk = chunks[chunkId], files.contains(chunk.file) {
+                indicesToRemove.append(i)
+            }
+        }
+        
+        // Remove in reverse order to maintain valid indices
+        for i in indicesToRemove.reversed() {
+            let chunkId = chunkIds[i]
+            embeddings.remove(at: i)
+            chunkIds.remove(at: i)
+            chunks.removeValue(forKey: chunkId)
+        }
+        
+        if verbose && !indicesToRemove.isEmpty {
+            fputs("[EmbeddingIndex] Removed \(indicesToRemove.count) chunks for \(files.count) changed files\n", stderr)
+        }
+        
+        return indicesToRemove.count
+    }
+    
+    /// Update file hashes for changed files
+    func updateFileHashes(_ hashes: [String: String]) {
+        for (file, hash) in hashes {
+            fileHashes[file] = hash
+        }
+    }
+    
     // MARK: - Search
     
     /// Search for chunks similar to the query

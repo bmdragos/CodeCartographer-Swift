@@ -282,6 +282,11 @@ class MCPServer {
         cache.scan(verbose: verbose)
         cache.startWatching()
         
+        // Set up incremental re-embedding on file changes
+        cache.onFilesChanged = { [weak self] changedFiles in
+            self?.handleFilesChanged(changedFiles)
+        }
+        
         // Background warmup for large projects
         let fileCount = cache.fileCount
         if fileCount >= 50 {
@@ -1806,6 +1811,61 @@ class MCPServer {
         indexingLock.lock()
         defer { indexingLock.unlock() }
         return (isIndexing, indexingProgress, indexingError)
+    }
+    
+    /// Handle file changes for incremental re-embedding
+    private func handleFilesChanged(_ changedFiles: Set<String>) {
+        guard !changedFiles.isEmpty else { return }
+        guard let index = embeddingIndex, !index.isEmpty else { return }
+        
+        // Don't re-embed if a full indexing is in progress
+        let status = getIndexingStatus()
+        if status.isIndexing { return }
+        
+        if verbose {
+            fputs("[MCP] Files changed: \(changedFiles.joined(separator: ", "))\n", stderr)
+        }
+        
+        // Perform incremental re-embedding in background
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                // 1. Remove old chunks for changed files
+                index.removeChunksForFiles(changedFiles)
+                
+                // 2. Get updated parsed files
+                let parsedFiles = self.cache.parsedFiles.filter { changedFiles.contains($0.relativePath) }
+                guard !parsedFiles.isEmpty else { return }
+                
+                // 3. Extract chunks for changed files only
+                let extractor = ChunkExtractor(cache: self.cache, verbose: self.verbose)
+                let newChunks = extractor.extractChunks(from: parsedFiles)
+                
+                // 4. Update file hashes
+                var fileHashes: [String: String] = [:]
+                for file in parsedFiles {
+                    fileHashes[file.relativePath] = file.contentHash
+                }
+                index.updateFileHashes(fileHashes)
+                
+                // 5. Embed new chunks
+                if !newChunks.isEmpty {
+                    try index.index(newChunks)
+                    
+                    if self.verbose {
+                        fputs("[MCP] Incremental re-embed: \(newChunks.count) chunks for \(changedFiles.count) files\n", stderr)
+                    }
+                }
+                
+                // 6. Save updated index to cache
+                let cacheURL = self.getIndexCacheURL()
+                try index.save(to: cacheURL)
+                
+            } catch {
+                fputs("[MCP] Incremental re-embedding failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
     }
     
     private func executeBuildSearchIndex(provider: String, dgxEndpoint: String?) throws -> String {
