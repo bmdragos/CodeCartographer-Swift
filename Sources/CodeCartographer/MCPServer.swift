@@ -1731,6 +1731,8 @@ class MCPServer {
                         }
                     } catch {
                         if self.verbose { fputs("[MCP] Cache load failed: \(error.localizedDescription), rebuilding...\n", stderr) }
+                        // Delete invalid cache to free disk space
+                        try? FileManager.default.removeItem(at: cacheURL)
                         changedFiles = Set(fileHashes.keys)  // Re-embed all
                     }
                 } else {
