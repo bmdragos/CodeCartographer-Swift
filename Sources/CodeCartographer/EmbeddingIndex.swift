@@ -196,6 +196,7 @@ final class EmbeddingIndex {
     /// Save index to disk
     func save(to url: URL) throws {
         let data = IndexData(
+            schemaVersion: kIndexSchemaVersion,
             embeddings: embeddings,
             chunkIds: chunkIds,
             chunks: Array(chunks.values),
@@ -217,6 +218,15 @@ final class EmbeddingIndex {
     func load(from url: URL, currentHashes: [String: String]) throws -> Set<String> {
         let data = try Data(contentsOf: url)
         let decoded = try JSONDecoder().decode(IndexData.self, from: data)
+        
+        // Verify schema version matches (chunk extraction logic may have changed)
+        let cacheVersion = decoded.schemaVersion ?? 0  // Old caches have no version
+        guard cacheVersion == kIndexSchemaVersion else {
+            throw IndexError.schemaVersionMismatch(
+                expected: kIndexSchemaVersion,
+                got: cacheVersion
+            )
+        }
         
         // Verify dimensions match
         guard decoded.dimensions == provider.dimensions else {
@@ -296,7 +306,12 @@ struct SearchResult: Codable {
     let score: Float
 }
 
+/// Schema version - bump this when chunk extraction logic changes significantly
+/// This ensures stale caches are invalidated when the extraction produces different chunks
+let kIndexSchemaVersion = 3  // v3: TypeSummary + calledBy normalization
+
 struct IndexData: Codable {
+    let schemaVersion: Int?  // nil for old caches (pre-v3)
     let embeddings: [[Float]]
     let chunkIds: [String]
     let chunks: [CodeChunk]
@@ -307,11 +322,14 @@ struct IndexData: Codable {
 }
 
 enum IndexError: Error, LocalizedError {
+    case schemaVersionMismatch(expected: Int, got: Int)
     case dimensionMismatch(expected: Int, got: Int)
     case notIndexed
     
     var errorDescription: String? {
         switch self {
+        case .schemaVersionMismatch(let expected, let got):
+            return "Schema version mismatch: cache is v\(got), current is v\(expected). Rebuilding index..."
         case .dimensionMismatch(let expected, let got):
             return "Dimension mismatch: expected \(expected), got \(got)"
         case .notIndexed:
