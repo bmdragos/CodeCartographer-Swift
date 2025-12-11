@@ -37,6 +37,24 @@ pip install transformers==4.44.0 fastapi uvicorn datasets einops
 python -m uvicorn embedding_server:app --host 0.0.0.0 --port 8080
 ```
 
+## Restart Server (Container Already Exists)
+
+```bash
+# SSH into DGX
+ssh user@192.168.1.159
+
+# Find container
+docker ps -a | grep pytorch
+
+# Start and enter
+docker start <container_id>
+docker exec -it <container_id> bash
+
+# Inside container:
+source /workspace/venv/bin/activate
+python -m uvicorn embedding_server:app --host 0.0.0.0 --port 8080
+```
+
 ## Use with CodeCartographer
 
 ```swift
