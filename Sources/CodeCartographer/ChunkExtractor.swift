@@ -301,7 +301,6 @@ class ChunkExtractor {
         
         // Update chunks with calledBy
         allChunks = allChunks.map { chunk in
-            var updated = chunk
             let chunkId = "\(chunk.parentType ?? "").\(chunk.name)"
             // Use reflection/rebuild since structs are immutable
             return CodeChunk(
@@ -360,10 +359,126 @@ class ChunkExtractor {
         if verbose {
             fputs("[ChunkExtractor] Added \(hotspotChunks.count) hotspot, \(fileSummaryChunks.count) summary, \(clusterChunks.count) cluster, \(typeSummaryChunks.count) typeSummary chunks\n", stderr)
         }
-        
+
         return allChunks
     }
-    
+
+    /// Generate only virtual chunks (hotspots, summaries, clusters, typeSummaries)
+    /// Used for incremental updates when file chunks already exist
+    /// - Parameters:
+    ///   - fileChunks: All file-level chunks (non-virtual)
+    ///   - parsedFiles: All parsed files in the project (needed for analyzers)
+    /// - Returns: Array of virtual chunks only
+    func generateVirtualChunks(from fileChunks: [CodeChunk], parsedFiles: [ParsedFile]) -> [CodeChunk] {
+        guard !parsedFiles.isEmpty else { return [] }
+
+        let startTime = Date()
+
+        // Build call graph for calledBy relationships (same as extractChunks)
+        var callGraph: [String: Set<String>] = [:]
+        for chunk in fileChunks {
+            let callerId = "\(chunk.parentType ?? "").\(chunk.name)"
+            callGraph[callerId] = Set(chunk.calls)
+        }
+
+        // Generate virtual chunks
+        let hotspotChunks = generateHotspotChunks(from: fileChunks, parsedFiles: parsedFiles)
+        let fileSummaryChunks = generateFileSummaryChunks(from: fileChunks, parsedFiles: parsedFiles)
+
+        let graphAnalyzer = DependencyGraphAnalyzer()
+        let typeMap = graphAnalyzer.analyzeTypes(parsedFiles: parsedFiles)
+
+        let clusterChunks = generateClusterChunks(from: fileChunks, parsedFiles: parsedFiles, typeMap: typeMap)
+        let typeSummaryChunks = generateTypeSummaryChunks(from: fileChunks, typeMap: typeMap)
+
+        var virtualChunks: [CodeChunk] = []
+        virtualChunks.append(contentsOf: hotspotChunks)
+        virtualChunks.append(contentsOf: fileSummaryChunks)
+        virtualChunks.append(contentsOf: clusterChunks)
+        virtualChunks.append(contentsOf: typeSummaryChunks)
+
+        if verbose {
+            let elapsed = Date().timeIntervalSince(startTime)
+            fputs("[ChunkExtractor] Generated \(virtualChunks.count) virtual chunks (\(hotspotChunks.count) hotspot, \(fileSummaryChunks.count) summary, \(clusterChunks.count) cluster, \(typeSummaryChunks.count) typeSummary) in \(String(format: "%.2f", elapsed))s\n", stderr)
+        }
+
+        return virtualChunks
+    }
+
+    /// Extract only file-level chunks (no virtual chunks) for a set of files
+    /// Used for incremental updates
+    func extractFileChunks(from parsedFiles: [ParsedFile]) -> [CodeChunk] {
+        guard !parsedFiles.isEmpty else { return [] }
+
+        let lock = NSLock()
+        var allFileChunks: [[CodeChunk]] = Array(repeating: [], count: parsedFiles.count)
+
+        // Parallel extraction (same as extractChunks but without virtual chunk generation)
+        DispatchQueue.concurrentPerform(iterations: parsedFiles.count) { index in
+            let file = parsedFiles[index]
+
+            // Check chunk cache first
+            if let cachedChunks = cache?.getChunks(for: file) {
+                // Filter out any virtual chunks from cache
+                let fileOnly = cachedChunks.filter { !Self.virtualChunkKinds.contains($0.kind) }
+                lock.lock()
+                allFileChunks[index] = fileOnly
+                lock.unlock()
+                return
+            }
+
+            // Get or compute findings
+            var findings = cache?.getFindings(for: file) ?? FileFindings()
+            if cache?.getFindings(for: file) == nil {
+                findings = FileFindings()
+
+                let singletonVisitor = FileAnalyzer(filePath: file.relativePath, sourceText: file.sourceText)
+                singletonVisitor.walk(file.ast)
+                findings.singletonLines = Set(singletonVisitor.references.compactMap { $0.line })
+
+                let reactiveVisitor = ReactiveVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+                reactiveVisitor.walk(file.ast)
+                findings.reactiveLines = Set(reactiveVisitor.subscriptions.compactMap { $0.line })
+
+                let networkVisitor = NetworkVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+                networkVisitor.walk(file.ast)
+                findings.networkLines = Set(networkVisitor.endpoints.compactMap { $0.line })
+
+                let delegateVisitor = DelegateWiringVisitor(filePath: file.relativePath, sourceText: file.sourceText)
+                delegateVisitor.walk(file.ast)
+                findings.delegateLines = Set(delegateVisitor.wirings.compactMap { $0.line })
+
+                cache?.cacheFindings(findings, for: file)
+            }
+
+            // Extract chunks
+            let chunks = extractFileChunksFromAST(file: file, findings: findings)
+
+            lock.lock()
+            allFileChunks[index] = chunks
+            cache?.cacheChunks(chunks, for: file)
+            lock.unlock()
+        }
+
+        return allFileChunks.flatMap { $0 }
+    }
+
+    /// Virtual chunk kinds
+    private static let virtualChunkKinds: Set<CodeChunk.ChunkKind> = [.hotspot, .fileSummary, .cluster, .typeSummary]
+
+    /// Extract file-level chunks from a single file's AST
+    private func extractFileChunksFromAST(file: ParsedFile, findings: FileFindings) -> [CodeChunk] {
+        let imports = extractImports(from: file.ast)
+        let visitor = ChunkVisitor(
+            filePath: file.relativePath,
+            sourceText: file.sourceText,
+            imports: imports,
+            findings: findings
+        )
+        visitor.walk(file.ast)
+        return visitor.chunks
+    }
+
     /// Generate hotspot chunks for files with quality issues
     /// Uses actual analyzers for accurate data
     private func generateHotspotChunks(from chunks: [CodeChunk], parsedFiles: [ParsedFile]) -> [CodeChunk] {
@@ -1465,7 +1580,6 @@ final class CallExtractorVisitor: SyntaxVisitor {
         
         // Extract the method name
         if let lastDot = callText.lastIndex(of: ".") {
-            let methodName = String(callText[callText.index(after: lastDot)...])
             let typePart = String(callText[..<lastDot])
             calls.append(callText)
             if !typePart.isEmpty && typePart.first?.isUppercase == true {

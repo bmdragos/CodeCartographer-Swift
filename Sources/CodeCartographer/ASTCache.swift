@@ -2,6 +2,7 @@ import Foundation
 import SwiftSyntax
 import SwiftParser
 import CoreServices
+import CommonCrypto
 
 // MARK: - Parsed File
 
@@ -36,10 +37,14 @@ public final class ParsedFile {
         self.url = url
         self.relativePath = url.path.replacingOccurrences(of: root.path + "/", with: "")
         self.sourceText = try String(contentsOf: url)
-        
-        // Fast hash for change detection
+
+        // Stable SHA256 hash for change detection (hashValue is randomized per process!)
         let data = sourceText.data(using: .utf8) ?? Data()
-        self.contentHash = String(data.hashValue, radix: 16)
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes { ptr in
+            _ = CC_SHA256(ptr.baseAddress, CC_LONG(data.count), &hash)
+        }
+        self.contentHash = hash.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
     
     /// Create with pre-parsed AST (for testing or when AST already exists)
@@ -48,9 +53,14 @@ public final class ParsedFile {
         self.relativePath = relativePath
         self.sourceText = sourceText
         self._ast = ast
-        
+
+        // Stable SHA256 hash for change detection (hashValue is randomized per process!)
         let data = sourceText.data(using: .utf8) ?? Data()
-        self.contentHash = String(data.hashValue, radix: 16)
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes { ptr in
+            _ = CC_SHA256(ptr.baseAddress, CC_LONG(data.count), &hash)
+        }
+        self.contentHash = hash.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -91,12 +101,7 @@ public final class ASTCache {
     // Key: relativePath, Value: (contentHash, chunks)
     private var chunksCache: [String: (hash: String, chunks: [CodeChunk])] = [:]
     private let chunksLock = NSLock()
-    
-    // Per-chunk embedding cache
-    // Key: chunk.id + contentHash, Value: embedding vector
-    private var embeddingCache: [String: [Float]] = [:]
-    private let embeddingLock = NSLock()
-    
+
     public init(rootURL: URL) {
         self.rootURL = rootURL
     }
@@ -333,42 +338,11 @@ public final class ASTCache {
         chunksCache[file.relativePath] = (file.contentHash, chunks)
     }
     
-    // MARK: - Embedding Cache
-    
-    /// Get cached embedding for a chunk
-    public func getEmbedding(for chunkId: String, contentHash: String) -> [Float]? {
-        embeddingLock.lock()
-        defer { embeddingLock.unlock() }
-        
-        let key = "\(chunkId):\(contentHash)"
-        return embeddingCache[key]
-    }
-    
-    /// Cache embedding for a chunk
-    public func cacheEmbedding(_ embedding: [Float], for chunkId: String, contentHash: String) {
-        embeddingLock.lock()
-        defer { embeddingLock.unlock() }
-        
-        let key = "\(chunkId):\(contentHash)"
-        embeddingCache[key] = embedding
-    }
-    
-    /// Get embedding cache stats
-    public var embeddingCacheCount: Int {
-        embeddingLock.lock()
-        defer { embeddingLock.unlock() }
-        return embeddingCache.count
-    }
-    
     /// Clear all chunk-related caches
     public func invalidateChunkCaches() {
         chunksLock.lock()
         chunksCache.removeAll()
         chunksLock.unlock()
-        
-        embeddingLock.lock()
-        embeddingCache.removeAll()
-        embeddingLock.unlock()
     }
     
     // MARK: - Parallel Parsing

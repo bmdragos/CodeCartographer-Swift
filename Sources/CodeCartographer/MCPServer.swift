@@ -220,10 +220,20 @@ class MCPServer {
     private var indexingBatchSize: Int = 0
     private var indexingProvider: String = ""
     private let indexingLock = NSLock()
+    private var dgxBaseURL: URL?  // For job queue API
+    private var dgxJobId: String?  // Current job ID for queue manager
+
+    // Default embedding configuration
+    private static let defaultDGXEndpoint = "http://192.168.1.159:8080/embed"
     
     // Pending file changes during indexing (processed after indexing completes)
     private var pendingFileChanges: Set<String> = []
-    
+
+    // Cross-instance cache sync
+    private var cacheWatcher: DispatchSourceFileSystemObject?
+    private var cacheWatcherFD: Int32 = -1
+    private var lastKnownCacheModTime: Date?
+
     /// Get cache file URL for current project
     private func getIndexCacheURL() -> URL {
         // Use ~/.codecartographer/cache/<project-hash>.json
@@ -244,7 +254,146 @@ class MCPServer {
         
         return cacheDir.appendingPathComponent("\(projectHash).json")
     }
-    
+
+    /// Start watching the cache file for changes from other instances
+    private func startCacheWatcher() {
+        let cacheURL = getIndexCacheURL()
+
+        // Record current modification time
+        lastKnownCacheModTime = EmbeddingIndex.getCacheModificationTime(url: cacheURL)
+
+        // Open file descriptor for watching (create file if it doesn't exist)
+        if !FileManager.default.fileExists(atPath: cacheURL.path) {
+            // Touch the file so we can watch it
+            FileManager.default.createFile(atPath: cacheURL.path, contents: nil, attributes: nil)
+        }
+
+        let fd = open(cacheURL.path, O_EVTONLY)
+        guard fd >= 0 else {
+            if verbose {
+                fputs("[MCP] Failed to open cache file for watching: \(cacheURL.path)\n", stderr)
+            }
+            return
+        }
+        cacheWatcherFD = fd
+
+        // Create dispatch source for file changes
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete],
+            queue: DispatchQueue.global(qos: .utility)
+        )
+
+        source.setEventHandler { [weak self] in
+            self?.handleCacheFileChanged()
+        }
+
+        source.setCancelHandler { [weak self] in
+            if let fd = self?.cacheWatcherFD, fd >= 0 {
+                close(fd)
+                self?.cacheWatcherFD = -1
+            }
+        }
+
+        cacheWatcher = source
+        source.resume()
+
+        if verbose {
+            fputs("[MCP] Started watching cache file for cross-instance sync: \(cacheURL.lastPathComponent)\n", stderr)
+        }
+    }
+
+    /// Stop watching the cache file
+    private func stopCacheWatcher() {
+        cacheWatcher?.cancel()
+        cacheWatcher = nil
+    }
+
+    /// Handle cache file changes (called when another instance saves)
+    private func handleCacheFileChanged() {
+        let cacheURL = getIndexCacheURL()
+
+        // Check if modification time actually changed
+        guard let newModTime = EmbeddingIndex.getCacheModificationTime(url: cacheURL) else {
+            return
+        }
+
+        // If this is our own save, lastKnownCacheModTime will be updated in save()
+        // This check prevents reloading our own saves
+        if let lastKnown = lastKnownCacheModTime, newModTime <= lastKnown {
+            return
+        }
+
+        // Don't reload while we're actively indexing
+        indexingLock.lock()
+        let currentlyIndexing = isIndexing
+        indexingLock.unlock()
+
+        if currentlyIndexing {
+            if verbose {
+                fputs("[MCP] Cache file changed but indexing in progress, skipping reload\n", stderr)
+            }
+            return
+        }
+
+        if verbose {
+            fputs("[MCP] Cache file changed by another instance, reloading...\n", stderr)
+        }
+
+        // Reload the cache
+        do {
+            try embeddingIndex?.reloadFromCache(url: cacheURL)
+            lastKnownCacheModTime = newModTime
+
+            if verbose {
+                let count = embeddingIndex?.count ?? 0
+                fputs("[MCP] Reloaded \(count) chunks from cache (synced from another instance)\n", stderr)
+            }
+        } catch {
+            if verbose {
+                fputs("[MCP] Failed to reload cache: \(error)\n", stderr)
+            }
+        }
+    }
+
+    /// Clean up stale cache files with outdated schema versions
+    private func cleanStaleCaches() {
+        let cacheDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codecartographer")
+            .appendingPathComponent("cache")
+
+        guard let files = try? FileManager.default.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) else {
+            return
+        }
+
+        for file in files where file.pathExtension == "json" {
+            // Try to read just enough to check schema version
+            guard let handle = try? FileHandle(forReadingFrom: file) else { continue }
+            defer { try? handle.close() }
+
+            // Read first 1KB which should contain schemaVersion
+            let headerData = handle.readData(ofLength: 1024)
+            guard let headerString = String(data: headerData, encoding: .utf8) else { continue }
+
+            // Quick regex check for schema version
+            if let range = headerString.range(of: #""schemaVersion"\s*:\s*(\d+)"#, options: .regularExpression) {
+                let match = headerString[range]
+                if let versionRange = match.range(of: #"\d+"#, options: .regularExpression) {
+                    let versionStr = String(match[versionRange])
+                    if let version = Int(versionStr), version < EmbeddingIndex.currentSchemaVersion {
+                        // Stale cache - delete it
+                        let fileSize = (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0
+                        let sizeMB = Double(fileSize) / 1_000_000
+                        if verbose {
+                            fputs("[MCP] Removing stale cache (schema v\(version) < v\(EmbeddingIndex.currentSchemaVersion)): \(file.lastPathComponent) (\(String(format: "%.1f", sizeMB)) MB)\n", stderr)
+                        }
+                        try? FileManager.default.removeItem(at: file)
+                    }
+                }
+            }
+        }
+    }
+
     init(projectRoot: URL?, verbose: Bool = false) {
         // Start with provided project or current directory
         self.projectRoot = projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -255,10 +404,10 @@ class MCPServer {
     /// Switch to a different project
     /// - Parameters:
     ///   - path: Absolute path to the project root
-    ///   - provider: Embedding provider: "nlembedding" (default, local Apple) or "dgx" (GPU server)
-    ///   - dgxEndpoint: DGX server endpoint URL (required if provider is "dgx")
+    ///   - provider: Embedding provider: "dgx" (default, GPU server) or "nlembedding" (local Apple)
+    ///   - dgxEndpoint: DGX server endpoint URL (defaults to defaultDGXEndpoint for dgx provider)
     ///   - batchSize: Optional batch size override for embedding indexing
-    func setProject(_ path: String, provider: String = "nlembedding", dgxEndpoint: String? = nil, batchSize: Int? = nil) -> (success: Bool, message: String) {
+    func setProject(_ path: String, provider: String = "dgx", dgxEndpoint: String? = nil, batchSize: Int? = nil) -> (success: Bool, message: String) {
         let url = URL(fileURLWithPath: path)
         
         // Verify path exists and is a directory
@@ -268,9 +417,12 @@ class MCPServer {
             return (false, "Path does not exist or is not a directory: \(path)")
         }
         
+        // Use default DGX endpoint if not provided
+        let effectiveEndpoint = dgxEndpoint ?? (provider == "dgx" ? MCPServer.defaultDGXEndpoint : nil)
+
         // Validate DGX endpoint if using DGX provider
         if provider == "dgx" {
-            guard let endpoint = dgxEndpoint, URL(string: endpoint) != nil else {
+            guard let endpoint = effectiveEndpoint, URL(string: endpoint) != nil else {
                 return (false, "DGX provider requires a valid dgx_endpoint URL")
             }
         }
@@ -300,9 +452,9 @@ class MCPServer {
         
         // Clear old index and start background indexing with specified provider
         embeddingIndex = nil
-        startBackgroundIndexing(providerName: provider, dgxEndpoint: dgxEndpoint, batchSize: batchSize)
-        
-        let providerDesc = provider == "dgx" ? "DGX (\(dgxEndpoint ?? ""))" : "NLEmbedding (local)"
+        startBackgroundIndexing(providerName: provider, dgxEndpoint: effectiveEndpoint, batchSize: batchSize)
+
+        let providerDesc = provider == "dgx" ? "DGX (\(effectiveEndpoint ?? ""))" : "NLEmbedding (local)"
         let batchDesc = batchSize.map { ", batch size: \($0)" } ?? ""
         return (true, "Switched to project: \(path) (\(fileCount) Swift files). Background indexing started with \(providerDesc)\(batchDesc).")
     }
@@ -313,34 +465,54 @@ class MCPServer {
             fputs("[MCP] CodeCartographer MCP Server starting...\n", stderr)
             fputs("[MCP] Project root: \(projectRoot.path)\n", stderr)
         }
-        
+
+        // Set up incremental re-embedding on file changes (before starting watcher)
+        cache.onFilesChanged = { [weak self] changedFiles in
+            self?.handleFilesChanged(changedFiles)
+        }
+
         // Do ALL initialization in background so we can respond to MCP immediately
         // This prevents "initialization timed out" errors from Windsurf
         cache.verbose = verbose
-        DispatchQueue.global(qos: .userInitiated).async { [cache, verbose] in
-            cache.scan(verbose: verbose)
-            cache.startWatching()
-            
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            // Clean up stale caches from previous schema versions
+            self.cleanStaleCaches()
+
+            self.cache.scan(verbose: self.verbose)
+            self.cache.startWatching()
+
             // Smart warmup for larger projects
-            let fileCount = cache.fileCount
+            let fileCount = self.cache.fileCount
             if fileCount >= 50 {
-                cache.warmCache(verbose: verbose)
+                self.cache.warmCache(verbose: self.verbose)
             }
+
+            // Automatically start background indexing with default provider (DGX)
+            if self.verbose {
+                fputs("[MCP] Auto-starting background indexing with DGX...\n", stderr)
+            }
+            self.startBackgroundIndexing(providerName: "dgx", dgxEndpoint: MCPServer.defaultDGXEndpoint)
+
+            // Start watching cache file for cross-instance sync
+            self.startCacheWatcher()
         }
-        
+
         if verbose {
             fputs("[MCP] Ready. Listening for JSON-RPC messages on stdin...\n", stderr)
         }
-        
+
         // Read loop
         while let line = readLine() {
             if line.isEmpty { continue }
             handleMessage(line)
         }
-        
+
         // Clean up
         cache.stopWatching()
-        
+        stopCacheWatcher()
+
         if verbose {
             fputs("[MCP] Server shutting down.\n", stderr)
         }
@@ -394,7 +566,7 @@ class MCPServer {
             ]),
             "serverInfo": .object([
                 "name": .string("CodeCartographer"),
-                "version": .string("1.0.0")
+                "version": .string("2.0.4")
             ])
         ])
         
@@ -535,8 +707,8 @@ class MCPServer {
                 inputSchema: MCPInputSchema(
                     properties: [
                         "path": MCPProperty(type: "string", description: "Absolute path to the Swift project root directory"),
-                        "provider": MCPProperty(type: "string", description: "Optional: 'nlembedding' (default, local Apple) or 'dgx' (GPU server)"),
-                        "dgx_endpoint": MCPProperty(type: "string", description: "Optional: DGX server endpoint URL (required if provider is 'dgx'), e.g. http://192.168.1.159:8080/embed"),
+                        "provider": MCPProperty(type: "string", description: "Optional: 'dgx' (default, GPU server) or 'nlembedding' (local Apple)"),
+                        "dgx_endpoint": MCPProperty(type: "string", description: "Optional: DGX server endpoint URL (defaults to http://192.168.1.159:8080/embed)"),
                         "batch_size": MCPProperty(type: "integer", description: "Optional: Embedding batch size. Default: 8 for DGX (7B model), 500 for NLEmbedding. Increase for faster indexing if GPU has memory headroom.")
                     ],
                     required: ["path"]
@@ -654,11 +826,11 @@ class MCPServer {
             ),
             MCPTool(
                 name: "build_search_index",
-                description: "Build or rebuild the semantic search index for the project. Uses NLEmbedding by default. Call this before using semantic_search.",
+                description: "Build or rebuild the semantic search index for the project. Uses DGX by default. Call this before using semantic_search.",
                 inputSchema: MCPInputSchema(
                     properties: [
-                        "provider": MCPProperty(type: "string", description: "Optional: 'nlembedding' (default) or 'dgx'"),
-                        "dgx_endpoint": MCPProperty(type: "string", description: "Optional: DGX server endpoint URL (required if provider is 'dgx')")
+                        "provider": MCPProperty(type: "string", description: "Optional: 'dgx' (default) or 'nlembedding'"),
+                        "dgx_endpoint": MCPProperty(type: "string", description: "Optional: DGX server endpoint URL (defaults to http://192.168.1.159:8080/embed)")
                     ]
                 )
             ),
@@ -773,6 +945,31 @@ class MCPServer {
                         "path": MCPProperty(type: "string", description: "Optional: specific file to analyze")
                     ]
                 )
+            ),
+            MCPTool(
+                name: "dgx_health",
+                description: "Check DGX embedding server health and configuration",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "endpoint": MCPProperty(type: "string", description: "Optional: DGX server base URL (defaults to http://192.168.1.159:8080)")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "dgx_stats",
+                description: "Get DGX embedding server statistics (requests, throughput, errors)",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "endpoint": MCPProperty(type: "string", description: "Optional: DGX server base URL (defaults to http://192.168.1.159:8080)")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "indexing_status",
+                description: "Check embedding index build progress without interrupting. Returns status (idle/indexing/complete/error), progress percentage, chunks embedded, elapsed time, and ETA.",
+                inputSchema: MCPInputSchema(
+                    properties: [:]
+                )
             )
         ]
         
@@ -867,8 +1064,8 @@ class MCPServer {
             guard let path = arguments["path"]?.stringValue else {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: path"])
             }
-            let provider = arguments["provider"]?.stringValue ?? "nlembedding"
-            let dgxEndpoint = arguments["dgx_endpoint"]?.stringValue
+            let provider = arguments["provider"]?.stringValue ?? "dgx"
+            let dgxEndpoint = arguments["dgx_endpoint"]?.stringValue ?? (provider == "dgx" ? MCPServer.defaultDGXEndpoint : nil)
             let batchSize = arguments["batch_size"]?.intValue
             return executeSetProject(path: path, provider: provider, dgxEndpoint: dgxEndpoint, batchSize: batchSize)
         // Additional analysis tools
@@ -910,8 +1107,8 @@ class MCPServer {
             let kind = arguments["kind"]?.stringValue
             return try executeExtractChunks(path: path, kind: kind)
         case "build_search_index":
-            let provider = arguments["provider"]?.stringValue ?? "nlembedding"
-            let dgxEndpoint = arguments["dgx_endpoint"]?.stringValue
+            let provider = arguments["provider"]?.stringValue ?? "dgx"
+            let dgxEndpoint = arguments["dgx_endpoint"]?.stringValue ?? (provider == "dgx" ? MCPServer.defaultDGXEndpoint : nil)
             return try executeBuildSearchIndex(provider: provider, dgxEndpoint: dgxEndpoint)
         case "semantic_search":
             guard let query = arguments["query"]?.stringValue else {
@@ -959,6 +1156,14 @@ class MCPServer {
         case "analyze_auth_migration":
             let path = arguments["path"]?.stringValue
             return try executeAnalyzeAuthMigration(path: path)
+        case "dgx_health":
+            let endpoint = arguments["endpoint"]?.stringValue ?? "http://192.168.1.159:8080"
+            return try executeDGXHealth(endpoint: endpoint)
+        case "dgx_stats":
+            let endpoint = arguments["endpoint"]?.stringValue ?? "http://192.168.1.159:8080"
+            return try executeDGXStats(endpoint: endpoint)
+        case "indexing_status":
+            return executeIndexingStatus()
         default:
             throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"])
         }
@@ -978,9 +1183,9 @@ class MCPServer {
         
         let info = VersionInfo(
             name: "CodeCartographer",
-            version: "1.0.0",
+            version: "2.0.4",
             description: "Swift Static Analyzer for AI Coding Assistants",
-            toolCount: 37,
+            toolCount: 40,
             currentProject: projectRoot.path,
             fileCount: cache.fileCount
         )
@@ -1385,7 +1590,7 @@ class MCPServer {
         return "{\"status\": \"rescanned\", \"fileCount\": \(cache.fileCount)}"
     }
     
-    private func executeSetProject(path: String, provider: String = "nlembedding", dgxEndpoint: String? = nil, batchSize: Int? = nil) -> String {
+    private func executeSetProject(path: String, provider: String = "dgx", dgxEndpoint: String? = nil, batchSize: Int? = nil) -> String {
         let result = setProject(path, provider: provider, dgxEndpoint: dgxEndpoint, batchSize: batchSize)
         if result.success {
             struct SetProjectResult: Codable {
@@ -1662,10 +1867,10 @@ class MCPServer {
     
     /// Start background indexing (called automatically on project switch)
     /// - Parameters:
-    ///   - providerName: "nlembedding" or "dgx"
-    ///   - dgxEndpoint: URL for DGX server
+    ///   - providerName: "dgx" or "nlembedding"
+    ///   - dgxEndpoint: URL for DGX server (defaults to defaultDGXEndpoint for dgx provider)
     ///   - batchSize: Optional batch size override. Default: 8 for DGX, 500 for NLEmbedding
-    private func startBackgroundIndexing(providerName: String = "nlembedding", dgxEndpoint: String? = nil, batchSize: Int? = nil) {
+    private func startBackgroundIndexing(providerName: String = "dgx", dgxEndpoint: String? = nil, batchSize: Int? = nil) {
         indexingLock.lock()
         // Don't start if already indexing
         if isIndexing {
@@ -1678,7 +1883,7 @@ class MCPServer {
         indexingStartTime = Date()
         indexingEndTime = nil
         indexingProvider = providerName
-        indexingBatchSize = batchSize ?? (providerName.lowercased() == "dgx" ? 8 : 500)
+        indexingBatchSize = batchSize ?? (providerName.lowercased() == "dgx" ? 32 : 500)
         pendingFileChanges.removeAll()  // Clear any stale file changes from before indexing
         indexingLock.unlock()
         
@@ -1694,16 +1899,24 @@ class MCPServer {
                 case "nlembedding":
                     provider = try NLEmbeddingProvider()
                 case "dgx":
-                    guard let endpoint = dgxEndpoint, let url = URL(string: endpoint) else {
-                        throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "DGX provider requires dgx_endpoint URL"])
+                    let endpoint = dgxEndpoint ?? MCPServer.defaultDGXEndpoint
+                    guard let url = URL(string: endpoint) else {
+                        throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "DGX provider requires valid dgx_endpoint URL"])
                     }
                     provider = DGXEmbeddingProvider(endpoint: url)
+                    // Store base URL for progress reporting (strip /embed)
+                    self.dgxBaseURL = url.deletingLastPathComponent()
                 default:
-                    provider = try NLEmbeddingProvider()
+                    // Default to DGX
+                    guard let url = URL(string: MCPServer.defaultDGXEndpoint) else {
+                        throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid default DGX endpoint"])
+                    }
+                    provider = DGXEmbeddingProvider(endpoint: url)
+                    self.dgxBaseURL = url.deletingLastPathComponent()
                 }
                 
                 self.embeddingProvider = provider
-                let newIndex = EmbeddingIndex(provider: provider, cache: self.cache, verbose: self.verbose)
+                let newIndex = EmbeddingIndex(provider: provider, verbose: self.verbose)
                 
                 // Extract chunks
                 let parsedFiles = self.cache.parsedFiles
@@ -1721,13 +1934,20 @@ class MCPServer {
                 let cacheURL = self.getIndexCacheURL()
                 var changedFiles: Set<String> = []
                 var loadedFromCache = false
-                
+                var cacheWasComplete = false
+                var cachedJobId: String? = nil
+
                 if FileManager.default.fileExists(atPath: cacheURL.path) {
                     do {
-                        changedFiles = try newIndex.load(from: cacheURL, currentHashes: fileHashes)
+                        let loadResult = try newIndex.load(from: cacheURL, currentHashes: fileHashes)
+                        changedFiles = loadResult.changedFiles
+                        cacheWasComplete = loadResult.wasComplete
+                        cachedJobId = loadResult.dgxJobId
                         loadedFromCache = true
                         if self.verbose {
-                            fputs("[MCP] Loaded \(newIndex.count) embeddings from cache, \(changedFiles.count) files need re-embedding\n", stderr)
+                            let statusStr = cacheWasComplete ? "complete" : "checkpoint"
+                            let jobStr = cachedJobId.map { " job=\($0)" } ?? ""
+                            fputs("[MCP] Loaded \(newIndex.count) embeddings from cache (\(statusStr)\(jobStr)), \(changedFiles.count) files need re-embedding\n", stderr)
                         }
                     } catch {
                         if self.verbose { fputs("[MCP] Cache load failed: \(error.localizedDescription), rebuilding...\n", stderr) }
@@ -1738,46 +1958,125 @@ class MCPServer {
                 } else {
                     changedFiles = Set(fileHashes.keys)  // No cache, embed all
                 }
-                
-                // Filter chunks to only those in changed files
-                let chunksToEmbed = loadedFromCache 
-                    ? allChunks.filter { changedFiles.contains($0.file) }
-                    : allChunks
-                
+
+                // Determine which chunks need embedding:
+                // - If cache was complete: only embed chunks from changed files
+                // - If cache was checkpoint (incomplete): embed ALL chunks not already in cache
+                let chunksToEmbed: [CodeChunk]
+                if loadedFromCache && cacheWasComplete {
+                    // Complete cache - only embed changed files
+                    chunksToEmbed = allChunks.filter { changedFiles.contains($0.file) }
+                } else if loadedFromCache {
+                    // Checkpoint cache - embed chunks not already cached
+                    let cachedChunkIds = Set(newIndex.getAllChunkIds())
+                    chunksToEmbed = allChunks.filter { !cachedChunkIds.contains($0.id) }
+                    if self.verbose && !chunksToEmbed.isEmpty {
+                        fputs("[MCP] Resuming from checkpoint: \(cachedChunkIds.count) cached, \(chunksToEmbed.count) remaining\n", stderr)
+                    }
+                } else {
+                    // No cache - embed all
+                    chunksToEmbed = allChunks
+                }
+
+                let totalChunks = allChunks.count
+
                 // Update total
                 self.indexingLock.lock()
                 self.indexingProgress = (0, chunksToEmbed.count)
                 self.indexingLock.unlock()
-                
+
                 if chunksToEmbed.isEmpty {
                     if self.verbose { fputs("[MCP] All \(allChunks.count) chunks loaded from cache, no embedding needed!\n", stderr) }
                 } else {
-                    if self.verbose { 
-                        fputs("[MCP] Embedding \(chunksToEmbed.count) chunks (\(allChunks.count - chunksToEmbed.count) cached)...\n", stderr) 
+                    if self.verbose {
+                        fputs("[MCP] Embedding \(chunksToEmbed.count) chunks (\(allChunks.count - chunksToEmbed.count) cached)...\n", stderr)
                     }
-                    
+
+                    // Check if we have a cached job ID from a previous checkpoint
+                    var serverRecommendedBatchSize: Int? = nil
+                    if let existingJobId = cachedJobId {
+                        let jobStatus = self.checkJobStatus(jobId: existingJobId)
+                        if jobStatus == "active" || jobStatus == "queued" {
+                            // Resume existing job
+                            self.dgxJobId = existingJobId
+                            if self.verbose {
+                                fputs("[MCP] Resuming existing job \(existingJobId) (status: \(jobStatus!))\n", stderr)
+                            }
+                        } else {
+                            // Job expired/completed/failed, register new one
+                            if self.verbose && jobStatus != nil {
+                                fputs("[MCP] Cached job \(existingJobId) is \(jobStatus!), registering new job\n", stderr)
+                            }
+                            if let result = self.registerJobWithDGX(totalChunks: chunksToEmbed.count) {
+                                self.dgxJobId = result.jobId
+                                serverRecommendedBatchSize = result.recommendedBatchSize
+                            }
+                        }
+                    } else {
+                        // No cached job, register new one
+                        if let result = self.registerJobWithDGX(totalChunks: chunksToEmbed.count) {
+                            self.dgxJobId = result.jobId
+                            serverRecommendedBatchSize = result.recommendedBatchSize
+                        }
+                    }
+
+                    // Wait for our turn in the queue (other instances may be using GPU)
+                    if self.dgxJobId != nil && !self.waitForJobActive() {
+                        throw NSError(domain: "MCP", code: 2, userInfo: [
+                            NSLocalizedDescriptionKey: "Job queue timeout - GPU busy for too long"
+                        ])
+                    }
+
                     // Index in batches with progress updates
-                    let defaultBatchSize = providerName.lowercased() == "dgx" ? 8 : 500
+                    // Use server-recommended batch size if available, otherwise use defaults
+                    let defaultBatchSize: Int
+                    if let serverBatch = serverRecommendedBatchSize {
+                        defaultBatchSize = serverBatch
+                    } else {
+                        defaultBatchSize = providerName.lowercased() == "dgx" ? 32 : 500
+                    }
                     let actualBatchSize = batchSize ?? defaultBatchSize
                     self.indexingBatchSize = actualBatchSize
                     if self.verbose { fputs("[MCP] Using batch size: \(actualBatchSize)\n", stderr) }
-                    
+
+                    // Checkpoint every 500 chunks for resumability
+                    let checkpointInterval = 500
+                    var chunksSinceCheckpoint = 0
+
                     for batchStart in stride(from: 0, to: chunksToEmbed.count, by: actualBatchSize) {
                         let batchEnd = min(batchStart + actualBatchSize, chunksToEmbed.count)
                         let batch = Array(chunksToEmbed[batchStart..<batchEnd])
                         try newIndex.index(batch)
-                        
+
                         self.indexingLock.lock()
                         self.indexingProgress = (batchEnd, chunksToEmbed.count)
                         self.indexingLock.unlock()
-                        
+
+                        // Report progress to DGX dashboard
+                        self.reportProgressToDGX(current: batchEnd, total: chunksToEmbed.count)
+
+                        // Checkpoint save for resumability (marked incomplete so we resume on restart)
+                        chunksSinceCheckpoint += batch.count
+                        if chunksSinceCheckpoint >= checkpointInterval {
+                            do {
+                                try newIndex.save(to: cacheURL, isComplete: false, totalExpectedChunks: totalChunks, dgxJobId: self.dgxJobId)
+                                self.lastKnownCacheModTime = EmbeddingIndex.getCacheModificationTime(url: cacheURL)
+                                if self.verbose { fputs("[MCP] Checkpoint saved at \(batchEnd)/\(chunksToEmbed.count) (incomplete, job=\(self.dgxJobId ?? "none"))\n", stderr) }
+                            } catch {
+                                fputs("[MCP] Warning: Checkpoint save failed: \(error.localizedDescription)\n", stderr)
+                            }
+                            chunksSinceCheckpoint = 0
+                        }
+
                         if self.verbose { fputs("[MCP] Embedded \(batchEnd)/\(chunksToEmbed.count)\n", stderr) }
                     }
                 }
-                
-                // Save to cache
+
+                // Final save (marked complete, no job ID since indexing is done)
                 do {
-                    try newIndex.save(to: cacheURL)
+                    try newIndex.save(to: cacheURL, isComplete: true, totalExpectedChunks: totalChunks, dgxJobId: nil)
+                    // Update our known mod time to prevent reloading our own save
+                    self.lastKnownCacheModTime = EmbeddingIndex.getCacheModificationTime(url: cacheURL)
                 } catch {
                     fputs("[MCP] Warning: Failed to save index cache: \(error.localizedDescription)\n", stderr)
                 }
@@ -1790,6 +2089,9 @@ class MCPServer {
                 self.indexingEndTime = Date()
                 self.indexingLock.unlock()
                 
+                // Mark job complete on DGX queue
+                self.completeJobOnDGX()
+
                 // Log completion with timing
                 if let startTime = self.indexingStartTime, let endTime = self.indexingEndTime {
                     let duration = endTime.timeIntervalSince(startTime)
@@ -1819,7 +2121,10 @@ class MCPServer {
                 self.isIndexing = false
                 self.indexingError = error.localizedDescription
                 self.indexingLock.unlock()
-                
+
+                // Mark job failed on DGX queue
+                self.failJobOnDGX(error: error.localizedDescription)
+
                 fputs("[MCP] Background indexing failed: \(error.localizedDescription)\n", stderr)
             }
         }
@@ -1831,7 +2136,203 @@ class MCPServer {
         defer { indexingLock.unlock() }
         return (isIndexing, indexingProgress, indexingError)
     }
-    
+
+    // MARK: - DGX Job Queue API
+
+    /// Result of job registration
+    struct JobRegistrationResult {
+        let jobId: String
+        let recommendedBatchSize: Int?
+    }
+
+    /// Register a new indexing job with the DGX job queue
+    /// Returns job ID and recommended batch size if successful, nil if registration failed
+    private func registerJobWithDGX(totalChunks: Int) -> JobRegistrationResult? {
+        guard let baseURL = dgxBaseURL else { return nil }
+        let jobsURL = baseURL.appendingPathComponent("jobs")
+
+        var request = URLRequest(url: jobsURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10
+
+        let projectName = projectRoot.lastPathComponent
+        let instanceId = ProcessInfo.processInfo.processIdentifier
+        let payload: [String: Any] = [
+            "project": projectName,
+            "total_chunks": totalChunks,
+            "instance_id": "codecart-\(instanceId)"
+        ]
+
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        var result: JobRegistrationResult?
+        let semaphore = DispatchSemaphore(value: 0)
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            guard error == nil,
+                  let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200,
+                  let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = json["job_id"] as? String else { return }
+            let batchSize = json["recommended_batch_size"] as? Int
+            result = JobRegistrationResult(jobId: id, recommendedBatchSize: batchSize)
+        }
+        task.resume()
+        semaphore.wait()
+
+        if let r = result, verbose {
+            let batchStr = r.recommendedBatchSize.map { ", batch=\($0)" } ?? ""
+            fputs("[MCP] Registered job \(r.jobId) with DGX queue\(batchStr)\n", stderr)
+        }
+        return result
+    }
+
+    /// Check status of an existing job on the DGX server
+    /// Returns status string ("active", "queued", "completed", "failed") or nil if not found
+    private func checkJobStatus(jobId: String) -> String? {
+        guard let baseURL = dgxBaseURL else { return nil }
+        let jobURL = baseURL.appendingPathComponent("jobs").appendingPathComponent(jobId)
+
+        var request = URLRequest(url: jobURL)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 5
+
+        var status: String?
+        let semaphore = DispatchSemaphore(value: 0)
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            guard error == nil,
+                  let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200,
+                  let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let s = json["status"] as? String else { return }
+            status = s
+        }
+        task.resume()
+        semaphore.wait()
+
+        return status
+    }
+
+    /// Wait for job to become active (poll until status is "active")
+    /// Returns true if job is active, false if timeout or error
+    private func waitForJobActive(timeout: TimeInterval = 300) -> Bool {
+        guard let baseURL = dgxBaseURL, let jobId = dgxJobId else { return true }
+        let jobURL = baseURL.appendingPathComponent("jobs").appendingPathComponent(jobId)
+
+        let startTime = Date()
+        var isActive = false
+        var lastStatus = ""
+
+        while Date().timeIntervalSince(startTime) < timeout {
+            var request = URLRequest(url: jobURL)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 10
+
+            var currentStatus: String?
+            var queuePosition: Int?
+            let semaphore = DispatchSemaphore(value: 0)
+
+            let task = URLSession.shared.dataTask(with: request) { data, response, error in
+                defer { semaphore.signal() }
+                guard error == nil,
+                      let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200,
+                      let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let status = json["status"] as? String else { return }
+                currentStatus = status
+                queuePosition = json["queue_position"] as? Int
+            }
+            task.resume()
+            semaphore.wait()
+
+            if let status = currentStatus {
+                if status == "active" {
+                    isActive = true
+                    if verbose { fputs("[MCP] Job \(jobId) is now active\n", stderr) }
+                    break
+                } else if status == "queued" {
+                    if status != lastStatus {
+                        let pos = queuePosition.map { " (position \($0))" } ?? ""
+                        fputs("[MCP] Job \(jobId) queued\(pos), waiting for GPU...\n", stderr)
+                        lastStatus = status
+                    }
+                } else if status == "failed" || status == "completed" {
+                    fputs("[MCP] Job \(jobId) has status '\(status)', cannot proceed\n", stderr)
+                    break
+                }
+            }
+
+            // Poll every 2 seconds
+            Thread.sleep(forTimeInterval: 2)
+        }
+
+        return isActive
+    }
+
+    /// Report indexing progress to DGX job queue
+    private func reportProgressToDGX(current: Int, total: Int) {
+        guard let baseURL = dgxBaseURL, let jobId = dgxJobId else { return }
+        let progressURL = baseURL.appendingPathComponent("jobs")
+            .appendingPathComponent(jobId)
+            .appendingPathComponent("progress")
+
+        var request = URLRequest(url: progressURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 5
+
+        let payload: [String: Any] = ["current": current]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        // Fire and forget
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    /// Mark job as completed on DGX
+    private func completeJobOnDGX() {
+        guard let baseURL = dgxBaseURL, let jobId = dgxJobId else { return }
+        let completeURL = baseURL.appendingPathComponent("jobs")
+            .appendingPathComponent(jobId)
+            .appendingPathComponent("complete")
+
+        var request = URLRequest(url: completeURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 5
+
+        // Fire and forget
+        URLSession.shared.dataTask(with: request).resume()
+        if verbose { fputs("[MCP] Job \(jobId) marked complete\n", stderr) }
+        dgxJobId = nil
+    }
+
+    /// Mark job as failed on DGX
+    private func failJobOnDGX(error: String) {
+        guard let baseURL = dgxBaseURL, let jobId = dgxJobId else { return }
+        let failURL = baseURL.appendingPathComponent("jobs")
+            .appendingPathComponent(jobId)
+            .appendingPathComponent("fail")
+
+        var request = URLRequest(url: failURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 5
+
+        let payload: [String: Any] = ["error": error]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+        // Fire and forget
+        URLSession.shared.dataTask(with: request).resume()
+        if verbose { fputs("[MCP] Job \(jobId) marked failed: \(error)\n", stderr) }
+        dgxJobId = nil
+    }
+
     /// Handle file changes for incremental re-embedding
     private func handleFilesChanged(_ changedFiles: Set<String>) {
         guard !changedFiles.isEmpty else { return }
@@ -1856,39 +2357,55 @@ class MCPServer {
         // Perform incremental re-embedding in background
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            
+
             do {
-                // 1. Remove old chunks for changed files
-                index.removeChunksForFiles(changedFiles)
-                
-                // 2. Get updated parsed files
-                let parsedFiles = self.cache.parsedFiles.filter { changedFiles.contains($0.relativePath) }
-                guard !parsedFiles.isEmpty else { return }
-                
-                // 3. Extract chunks for changed files only
                 let extractor = ChunkExtractor(cache: self.cache, verbose: self.verbose)
-                let newChunks = extractor.extractChunks(from: parsedFiles)
-                
-                // 4. Update file hashes
-                var fileHashes: [String: String] = [:]
-                for file in parsedFiles {
-                    fileHashes[file.relativePath] = file.contentHash
+
+                // 1. Remove old chunks for changed files AND all virtual chunks
+                //    (virtual chunks depend on entire codebase and need regeneration)
+                index.removeChunksForFiles(changedFiles)
+                index.removeVirtualChunks()
+
+                // 2. Get ALL parsed files (needed for virtual chunk generation)
+                let allParsedFiles = self.cache.parsedFiles
+                let changedParsedFiles = allParsedFiles.filter { changedFiles.contains($0.relativePath) }
+
+                // 3. Extract file-level chunks for changed files only
+                let newFileChunks = extractor.extractFileChunks(from: changedParsedFiles)
+
+                // 4. Update file hashes for changed files
+                var newFileHashes: [String: String] = [:]
+                for file in changedParsedFiles {
+                    newFileHashes[file.relativePath] = file.contentHash
                 }
-                index.updateFileHashes(fileHashes)
-                
-                // 5. Embed new chunks
-                if !newChunks.isEmpty {
-                    try index.index(newChunks)
-                    
+                index.updateFileHashes(newFileHashes)
+
+                // 5. Get all file chunks (existing + new) for virtual chunk generation
+                var allFileChunks = index.getFileChunks()
+                allFileChunks.append(contentsOf: newFileChunks)
+
+                // 6. Generate virtual chunks based on complete codebase state
+                let virtualChunks = extractor.generateVirtualChunks(from: allFileChunks, parsedFiles: allParsedFiles)
+
+                // 7. Embed new file chunks and virtual chunks
+                var chunksToEmbed: [CodeChunk] = []
+                chunksToEmbed.append(contentsOf: newFileChunks)
+                chunksToEmbed.append(contentsOf: virtualChunks)
+
+                if !chunksToEmbed.isEmpty {
+                    try index.index(chunksToEmbed)
+
                     if self.verbose {
-                        fputs("[MCP] Incremental re-embed: \(newChunks.count) chunks for \(changedFiles.count) files\n", stderr)
+                        fputs("[MCP] Incremental re-embed: \(newFileChunks.count) file chunks + \(virtualChunks.count) virtual chunks for \(changedFiles.count) changed files\n", stderr)
                     }
                 }
-                
-                // 6. Save updated index to cache
+
+                // 8. Save updated index to cache (incremental update to complete index)
                 let cacheURL = self.getIndexCacheURL()
-                try index.save(to: cacheURL)
-                
+                try index.save(to: cacheURL, isComplete: true, totalExpectedChunks: index.count)
+                // Update our known mod time to prevent reloading our own save
+                self.lastKnownCacheModTime = EmbeddingIndex.getCacheModificationTime(url: cacheURL)
+
             } catch {
                 fputs("[MCP] Incremental re-embedding failed: \(error.localizedDescription)\n", stderr)
             }
@@ -2403,6 +2920,147 @@ class MCPServer {
         }
     }
     
+    // MARK: - DGX Server Tools
+
+    private func executeDGXHealth(endpoint: String) throws -> String {
+        let healthURL = URL(string: endpoint)!.deletingLastPathComponent().appendingPathComponent("health")
+        return try fetchDGXEndpoint(url: healthURL, description: "health")
+    }
+
+    private func executeDGXStats(endpoint: String) throws -> String {
+        let statsURL = URL(string: endpoint)!.deletingLastPathComponent().appendingPathComponent("stats")
+        return try fetchDGXEndpoint(url: statsURL, description: "stats")
+    }
+
+    private func fetchDGXEndpoint(url: URL, description: String) throws -> String {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10  // Quick timeout for health checks
+
+        var result: String?
+        var error: Error?
+
+        let semaphore = DispatchSemaphore(value: 0)
+        let task = URLSession.shared.dataTask(with: request) { data, response, err in
+            defer { semaphore.signal() }
+
+            if let err = err {
+                error = NSError(domain: "DGX", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "DGX server unreachable: \(err.localizedDescription)"
+                ])
+                return
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                error = NSError(domain: "DGX", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid response from DGX server"
+                ])
+                return
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                error = NSError(domain: "DGX", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: "DGX server returned HTTP \(httpResponse.statusCode)"
+                ])
+                return
+            }
+
+            guard let data = data, let json = String(data: data, encoding: .utf8) else {
+                error = NSError(domain: "DGX", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "No data from DGX server"
+                ])
+                return
+            }
+
+            result = json
+        }
+        task.resume()
+        semaphore.wait()
+
+        if let error = error {
+            throw error
+        }
+
+        return result ?? "{\"error\": \"unknown\"}"
+    }
+
+    private func executeIndexingStatus() -> String {
+        struct IndexingStatus: Codable {
+            let status: String           // idle, indexing, complete, error
+            let progress: Int            // 0-100 percentage
+            let current: Int             // chunks embedded so far
+            let total: Int               // total chunks to embed
+            let elapsedSeconds: Double?  // time since indexing started
+            let etaSeconds: Double?      // estimated time remaining
+            let chunksPerSecond: Double? // embedding throughput
+            let provider: String?        // dgx or nlembedding
+            let batchSize: Int?          // current batch size
+            let error: String?           // error message if failed
+            let indexSize: Int           // total chunks in index
+        }
+
+        indexingLock.lock()
+        let isCurrentlyIndexing = isIndexing
+        let progress = indexingProgress
+        let errorMsg = indexingError
+        let startTime = indexingStartTime
+        let endTime = indexingEndTime
+        let provider = indexingProvider
+        let batchSize = indexingBatchSize
+        indexingLock.unlock()
+
+        let indexSize = embeddingIndex?.count ?? 0
+
+        // Calculate timing
+        var elapsed: Double? = nil
+        var eta: Double? = nil
+        var rate: Double? = nil
+
+        if let start = startTime {
+            let end = endTime ?? Date()
+            elapsed = end.timeIntervalSince(start)
+
+            if isCurrentlyIndexing && progress.0 > 0 && progress.1 > 0 {
+                let secondsPerChunk = elapsed! / Double(progress.0)
+                let remaining = progress.1 - progress.0
+                eta = secondsPerChunk * Double(remaining)
+                rate = Double(progress.0) / elapsed!
+            } else if !isCurrentlyIndexing && progress.1 > 0 {
+                rate = Double(progress.1) / elapsed!
+            }
+        }
+
+        // Determine status string
+        let statusStr: String
+        if let _ = errorMsg {
+            statusStr = "error"
+        } else if isCurrentlyIndexing {
+            statusStr = "indexing"
+        } else if indexSize > 0 {
+            statusStr = "complete"
+        } else {
+            statusStr = "idle"
+        }
+
+        let percent = progress.1 > 0 ? (progress.0 * 100 / progress.1) : 0
+
+        let status = IndexingStatus(
+            status: statusStr,
+            progress: percent,
+            current: progress.0,
+            total: progress.1,
+            elapsedSeconds: elapsed.map { round($0 * 10) / 10 },
+            etaSeconds: eta.map { round($0 * 10) / 10 },
+            chunksPerSecond: rate.map { round($0 * 10) / 10 },
+            provider: provider.isEmpty ? nil : provider,
+            batchSize: batchSize > 0 ? batchSize : nil,
+            error: errorMsg,
+            indexSize: indexSize
+        )
+
+        return encodeToJSON(status)
+    }
+
     private func encodeToJSON<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()
         // Use compact JSON (no pretty printing) for faster transfer to AI agents

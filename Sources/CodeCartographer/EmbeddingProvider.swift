@@ -58,72 +58,127 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
     let modelName: String
     let dimensions: Int
     var name: String { "DGX(\(modelName))" }
-    
+
     private let session: URLSession
     private let timeout: TimeInterval
-    
+    private let maxRetries: Int
+    private let verbose: Bool
+
     /// Initialize DGX embedding provider
     /// - Parameters:
     ///   - endpoint: Full URL to the /embed endpoint (e.g., http://192.168.1.159:8080/embed)
     ///   - modelName: Model name for logging (default: NV-Embed-v2)
     ///   - dimensions: Output vector dimensions (default: 4096 for NV-Embed-v2)
-    ///   - timeout: Request timeout in seconds
-    init(endpoint: URL, modelName: String = "NV-Embed-v2", dimensions: Int = 4096, timeout: TimeInterval = 60) {
+    ///   - timeout: Request timeout in seconds (default: 120)
+    ///   - maxRetries: Max retry attempts for transient failures (default: 3)
+    ///   - verbose: Log retry attempts (default: false)
+    init(endpoint: URL, modelName: String = "NV-Embed-v2", dimensions: Int = 4096,
+         timeout: TimeInterval = 120, maxRetries: Int = 3, verbose: Bool = false) {
         self.endpoint = endpoint
         self.modelName = modelName
         self.dimensions = dimensions
         self.timeout = timeout
-        
+        self.maxRetries = maxRetries
+        self.verbose = verbose
+
+        // Configure session for connection reuse and optimal performance
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = timeout
+        config.timeoutIntervalForResource = timeout * 2  // Total time including retries
+        config.httpMaximumConnectionsPerHost = 2  // Allow some parallelism
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData  // Don't cache embeddings
+
         self.session = URLSession(configuration: config)
     }
-    
+
     func embed(_ text: String) throws -> [Float] {
         return try embed([text])[0]
     }
-    
+
     func embed(_ texts: [String]) throws -> [[Float]] {
+        var lastError: Error?
+
+        for attempt in 0..<maxRetries {
+            do {
+                return try performRequest(texts: texts)
+            } catch let error as EmbeddingError {
+                lastError = error
+
+                // Only retry on transient failures
+                if case .networkError(let msg) = error {
+                    let isRetryable = msg.contains("503") ||
+                                      msg.contains("timeout") ||
+                                      msg.contains("connection") ||
+                                      msg.contains("temporarily")
+
+                    if isRetryable && attempt < maxRetries - 1 {
+                        // Exponential backoff: 1s, 2s, 4s...
+                        let delay = pow(2.0, Double(attempt))
+                        if verbose {
+                            fputs("[DGX] Retry \(attempt + 1)/\(maxRetries) after \(delay)s: \(msg)\n", stderr)
+                        }
+                        Thread.sleep(forTimeInterval: delay)
+                        continue
+                    }
+                }
+                throw error
+            } catch {
+                lastError = error
+                throw error
+            }
+        }
+
+        throw lastError ?? EmbeddingError.embeddingFailed("Max retries exceeded")
+    }
+
+    private func performRequest(texts: [String]) throws -> [[Float]] {
         // Build request matching our FastAPI server format
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+        request.setValue("gzip", forHTTPHeaderField: "Accept-Encoding")  // Accept compressed responses
+
         // Server expects: {"inputs": [...]}
         let payload: [String: Any] = ["inputs": texts]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        
+
         // Synchronous request (for CLI tool)
         var result: [[Float]]?
         var error: Error?
-        
+
         let semaphore = DispatchSemaphore(value: 0)
         let task = session.dataTask(with: request) { data, response, err in
             defer { semaphore.signal() }
-            
+
             if let err = err {
-                error = EmbeddingError.networkError(err.localizedDescription)
+                let nsError = err as NSError
+                if nsError.code == NSURLErrorTimedOut {
+                    error = EmbeddingError.networkError("Request timeout after \(self.timeout)s")
+                } else {
+                    error = EmbeddingError.networkError(err.localizedDescription)
+                }
                 return
             }
-            
+
             guard let httpResponse = response as? HTTPURLResponse else {
                 error = EmbeddingError.networkError("Invalid response type")
                 return
             }
-            
+
             guard httpResponse.statusCode == 200 else {
                 let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? "no body"
                 error = EmbeddingError.networkError("HTTP \(httpResponse.statusCode): \(body)")
                 return
             }
-            
+
             guard let data = data else {
                 error = EmbeddingError.networkError("No data received")
                 return
             }
-            
+
             do {
                 // Server returns array directly: [[...]]
+                // URLSession automatically decompresses gzip responses
                 if let embeddings = try JSONSerialization.jsonObject(with: data) as? [[Double]] {
                     result = embeddings.map { $0.map { Float($0) } }
                 } else {
@@ -135,15 +190,15 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
         }
         task.resume()
         semaphore.wait()
-        
+
         if let error = error {
             throw error
         }
-        
+
         guard let embeddings = result else {
             throw EmbeddingError.embeddingFailed("No embeddings returned")
         }
-        
+
         return embeddings
     }
 }
