@@ -684,6 +684,18 @@ class MCPServer {
                 )
             ),
             MCPTool(
+                name: "suggest_fix",
+                description: "Generate a code fix for a detected smell. Returns original code, fixed code, and explanation.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "file": MCPProperty(type: "string", description: "File path (relative to project root)"),
+                        "line": MCPProperty(type: "integer", description: "Line number of the smell"),
+                        "smell_type": MCPProperty(type: "string", description: "Type of smell: 'force_unwrap', 'force_cast', 'force_try', 'empty_catch', 'implicitly_unwrapped'")
+                    ],
+                    required: ["file", "line", "smell_type"]
+                )
+            ),
+            MCPTool(
                 name: "track_property",
                 description: "Find all accesses to a property pattern (e.g., 'Account.*', 'Manager.shared'). Use filterProperty to find specific properties like 'tokens' or 'email'.",
                 inputSchema: MCPInputSchema(
@@ -1121,6 +1133,17 @@ class MCPServer {
         case "suggest_refactoring":
             let path = arguments["path"]?.stringValue
             return try executeSuggestRefactoring(path: path)
+        case "suggest_fix":
+            guard let file = arguments["file"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: file"])
+            }
+            guard let line = arguments["line"]?.intValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: line"])
+            }
+            guard let smellType = arguments["smell_type"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: smell_type"])
+            }
+            return try executeSuggestFix(file: file, line: line, smellType: smellType)
         case "track_property":
             guard let pattern = arguments["pattern"]?.stringValue else {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: pattern"])
@@ -1636,7 +1659,42 @@ class MCPServer {
         cache.cacheResult(result, for: cacheKey)
         return result
     }
-    
+
+    private func executeSuggestFix(file: String, line: Int, smellType: String) throws -> String {
+        // Map string smell type to enum
+        let type: CodeSmell.SmellType
+        switch smellType.lowercased() {
+        case "force_unwrap", "forceunwrap":
+            type = .forceUnwrap
+        case "force_cast", "forcecast":
+            type = .forceCast
+        case "force_try", "forcetry":
+            type = .forceTry
+        case "empty_catch", "emptycatch":
+            type = .emptycatch
+        case "implicitly_unwrapped", "implicitlyunwrapped", "iuo":
+            type = .implicitlyUnwrapped
+        default:
+            throw NSError(domain: "MCP", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Unknown smell type: \(smellType). Use: force_unwrap, force_cast, force_try, empty_catch, implicitly_unwrapped"
+            ])
+        }
+
+        // Create a synthetic CodeSmell
+        let smell = CodeSmell(
+            file: file,
+            line: line,
+            type: type,
+            code: "",  // Will be read from file
+            suggestion: "",
+            severity: type.severity
+        )
+
+        let generator = AutoFixGenerator(projectRoot: projectRoot)
+        let fixResult = generator.suggestFix(for: smell)
+        return encodeToJSON(fixResult)
+    }
+
     private func executeTrackProperty(pattern: String, filterProperty: String? = nil) throws -> String {
         let cacheKey = "track_property:\(pattern):\(filterProperty ?? "all")"
         if let cached = cache.getCachedResult(for: cacheKey) {
