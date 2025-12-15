@@ -387,11 +387,12 @@ class APIAnalyzer: CachingAnalyzer {
         allGlobalFunctions.sort { $0.name < $1.name }
         
         // Count public APIs
-        let publicTypes = allTypes.filter { ["public", "open"].contains($0.visibility) }
-        let publicFunctions = allGlobalFunctions.filter { ["public", "open"].contains($0.visibility) }
-        let totalPublic = publicTypes.count + publicFunctions.count +
-                          publicTypes.flatMap { $0.methods }.filter { ["public", "open"].contains($0.visibility) }.count +
-                          publicTypes.flatMap { $0.properties }.filter { ["public", "open"].contains($0.visibility) }.count
+        let publicVisibilities = ["public", "open"]
+        let publicTypes = allTypes.filter { publicVisibilities.contains($0.visibility) }
+        let publicFunctions = allGlobalFunctions.filter { publicVisibilities.contains($0.visibility) }
+        let publicMethods = publicTypes.flatMap { $0.methods }.filter { publicVisibilities.contains($0.visibility) }
+        let publicProperties = publicTypes.flatMap { $0.properties }.filter { publicVisibilities.contains($0.visibility) }
+        let totalPublic = publicTypes.count + publicFunctions.count + publicMethods.count + publicProperties.count
         
         // Recommendations
         var recommendations: [String] = []

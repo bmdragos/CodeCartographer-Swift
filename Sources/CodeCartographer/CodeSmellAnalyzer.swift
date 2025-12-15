@@ -97,7 +97,7 @@ final class CodeSmellVisitor: SyntaxVisitor {
         return .visitChildren
     }
     
-    // Detect force cast (as!)
+    // Detect force cast (as!) - resolved form
     override func visit(_ node: AsExprSyntax) -> SyntaxVisitorContinueKind {
         if node.questionOrExclamationMark?.tokenKind == .exclamationMark {
             let code = node.description.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -113,7 +113,24 @@ final class CodeSmellVisitor: SyntaxVisitor {
         }
         return .visitChildren
     }
-    
+
+    // Detect force cast (as!) - unresolved form (used during parsing before type checking)
+    override func visit(_ node: UnresolvedAsExprSyntax) -> SyntaxVisitorContinueKind {
+        if node.questionOrExclamationMark?.tokenKind == .exclamationMark {
+            let code = node.description.trimmingCharacters(in: .whitespacesAndNewlines)
+            let type = CodeSmell.SmellType.forceCast
+            smells.append(CodeSmell(
+                file: filePath,
+                line: lineNumber(for: node.position),
+                type: type,
+                code: String(code.prefix(50)),
+                suggestion: "Use conditional cast (as?) with optional binding",
+                severity: type.severity
+            ))
+        }
+        return .visitChildren
+    }
+
     // Detect force try (try!)
     override func visit(_ node: TryExprSyntax) -> SyntaxVisitorContinueKind {
         if node.questionOrExclamationMark?.tokenKind == .exclamationMark {

@@ -166,7 +166,7 @@ public final class ASTCache {
             if let existing = files[relativePath] {
                 // Check if file changed by comparing hash
                 if let newText = try? String(contentsOf: url) {
-                    let newData = newText.data(using: .utf8) ?? Data()
+                    let newData = newText.data(using: String.Encoding.utf8) ?? Data()
                     let newHash = String(newData.hashValue, radix: 16)
                     
                     if newHash == existing.contentHash {

@@ -2,14 +2,20 @@ import Foundation
 
 // MARK: - Output Models
 
-struct FileNode: Codable {
-    let path: String
-    var imports: [String]
-    var references: [SymbolReference]
+public struct FileNode: Codable {
+    public let path: String
+    public var imports: [String]
+    public var references: [SymbolReference]
+
+    public init(path: String, imports: [String], references: [SymbolReference]) {
+        self.path = path
+        self.imports = imports
+        self.references = references
+    }
 }
 
-struct SymbolReference: Codable {
-    enum Kind: String, Codable {
+public struct SymbolReference: Codable {
+    public enum Kind: String, Codable {
         case globalSingleton
         case propertyAccess
         case userDefaults
@@ -19,21 +25,34 @@ struct SymbolReference: Codable {
         case other
     }
 
-    let kind: Kind
-    let symbol: String
-    let line: Int?
-    let context: String? // function/method name where reference occurs
+    public let kind: Kind
+    public let symbol: String
+    public let line: Int?
+    public let context: String? // function/method name where reference occurs
+
+    public init(kind: Kind, symbol: String, line: Int?, context: String?) {
+        self.kind = kind
+        self.symbol = symbol
+        self.line = line
+        self.context = context
+    }
 }
 
-struct AnalysisSummary: Codable {
-    var totalReferences: Int
-    var singletonUsage: [String: Int]  // symbol -> count
-    var hotspotFiles: [String]          // files with most references
+public struct AnalysisSummary: Codable {
+    public var totalReferences: Int
+    public var singletonUsage: [String: Int]  // symbol -> count
+    public var hotspotFiles: [String]          // files with most references
+
+    public init(totalReferences: Int, singletonUsage: [String: Int], hotspotFiles: [String]) {
+        self.totalReferences = totalReferences
+        self.singletonUsage = singletonUsage
+        self.hotspotFiles = hotspotFiles
+    }
 }
 
 // MARK: - Extended Analysis Result (with targets)
 
-struct ExtendedAnalysisResult: Codable {
+public struct ExtendedAnalysisResult: Codable {
     let analyzedAt: String
     let rootPath: String
     let fileCount: Int

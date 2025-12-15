@@ -2,54 +2,54 @@ import Foundation
 import SwiftSyntax
 import SwiftParser
 
-final class FileAnalyzer: SyntaxVisitor {
-    let filePath: String
-    let sourceText: String
-    
-    private(set) var imports: Set<String> = []
-    private(set) var references: [SymbolReference] = []
-    
+public final class FileAnalyzer: SyntaxVisitor {
+    public let filePath: String
+    public let sourceText: String
+
+    public private(set) var imports: Set<String> = []
+    public private(set) var references: [SymbolReference] = []
+
     // Track current context (function/method we're inside)
     private var currentContext: String?
 
-    init(filePath: String, sourceText: String) {
+    public init(filePath: String, sourceText: String) {
         self.filePath = filePath
         self.sourceText = sourceText
         super.init(viewMode: .sourceAccurate)
     }
 
     // MARK: - Import Detection
-    
-    override func visit(_ node: ImportDeclSyntax) -> SyntaxVisitorContinueKind {
+
+    public override func visit(_ node: ImportDeclSyntax) -> SyntaxVisitorContinueKind {
         if let moduleName = node.path.first?.name.text {
             imports.insert(moduleName)
         }
         return .skipChildren
     }
-    
+
     // MARK: - Context Tracking
-    
-    override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
+
+    public override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind {
         currentContext = node.name.text
         return .visitChildren
     }
-    
-    override func visitPost(_ node: FunctionDeclSyntax) {
+
+    public override func visitPost(_ node: FunctionDeclSyntax) {
         currentContext = nil
     }
-    
-    override func visit(_ node: InitializerDeclSyntax) -> SyntaxVisitorContinueKind {
+
+    public override func visit(_ node: InitializerDeclSyntax) -> SyntaxVisitorContinueKind {
         currentContext = "init"
         return .visitChildren
     }
-    
-    override func visitPost(_ node: InitializerDeclSyntax) {
+
+    public override func visitPost(_ node: InitializerDeclSyntax) {
         currentContext = nil
     }
 
     // MARK: - Member Access Detection (Foo.bar)
-    
-    override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
+
+    public override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
         let baseText = node.base?.description.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nameText = node.declName.baseName.text
         let full = baseText.isEmpty ? nameText : "\(baseText).\(nameText)"
@@ -68,8 +68,8 @@ final class FileAnalyzer: SyntaxVisitor {
     }
 
     // MARK: - Function Call Detection
-    
-    override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
+
+    public override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
         // Handle chained calls like Account.sharedInstance().refreshWithUser(...)
         let callText = node.calledExpression.description.trimmingCharacters(in: .whitespacesAndNewlines)
         

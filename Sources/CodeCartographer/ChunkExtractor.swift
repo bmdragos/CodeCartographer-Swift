@@ -113,7 +113,7 @@ public struct CodeChunk: Codable {
         return parts.joined(separator: "\n")
     }
     
-    public enum ChunkKind: String, Codable {
+    public enum ChunkKind: String, Codable, Sendable {
         case function
         case method
         case initializer
@@ -128,8 +128,8 @@ public struct CodeChunk: Codable {
         case cluster  // Group of related files
         case typeSummary  // Type-level overview across all extensions
     }
-    
-    public enum Visibility: String, Codable {
+
+    public enum Visibility: String, Codable, Sendable {
         case `public`
         case `internal`
         case `private`

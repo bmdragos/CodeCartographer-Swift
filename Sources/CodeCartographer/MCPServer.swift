@@ -995,6 +995,26 @@ class MCPServer {
                 inputSchema: MCPInputSchema(
                     properties: [:]
                 )
+            ),
+            MCPTool(
+                name: "build_and_check",
+                description: "Build the Swift project and return structured results. Parses compiler errors/warnings with file, line, and suggestions.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "release": MCPProperty(type: "boolean", description: "Build in release mode (default: false, builds debug)"),
+                        "clean": MCPProperty(type: "boolean", description: "Clean build folder before building (default: false)")
+                    ]
+                )
+            ),
+            MCPTool(
+                name: "run_tests",
+                description: "Run Swift tests and return structured results. Parses test output for pass/fail status.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "filter": MCPProperty(type: "string", description: "Filter tests by name pattern (e.g., 'CodeSmell' runs only matching tests)"),
+                        "verbose": MCPProperty(type: "boolean", description: "Include full test output (default: false)")
+                    ]
+                )
             )
         ]
         
@@ -1195,6 +1215,14 @@ class MCPServer {
             return try executeDGXStats(endpoint: endpoint)
         case "indexing_status":
             return executeIndexingStatus()
+        case "build_and_check":
+            let release = arguments["release"]?.boolValue ?? false
+            let clean = arguments["clean"]?.boolValue ?? false
+            return executeBuildAndCheck(release: release, clean: clean)
+        case "run_tests":
+            let filter = arguments["filter"]?.stringValue
+            let verbose = arguments["verbose"]?.boolValue ?? false
+            return executeRunTests(filter: filter, verbose: verbose)
         default:
             throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"])
         }
@@ -3326,6 +3354,294 @@ class MCPServer {
         )
 
         return encodeToJSON(status)
+    }
+
+    // MARK: - Build and Test Tools
+
+    struct BuildResult: Codable {
+        let success: Bool
+        let duration: Double
+        let configuration: String
+        let errors: [BuildIssue]
+        let warnings: [BuildIssue]
+        let rawOutput: String?
+    }
+
+    struct BuildIssue: Codable {
+        let file: String
+        let line: Int
+        let column: Int?
+        let message: String
+        let suggestion: String?
+    }
+
+    struct TestRunResult: Codable {
+        let success: Bool
+        let duration: Double
+        let passed: Int
+        let failed: Int
+        let skipped: Int
+        let total: Int
+        let noTestsFound: Bool
+        let tests: [TestResult]
+        let rawOutput: String?
+    }
+
+    struct TestResult: Codable {
+        let name: String
+        let status: String
+        let duration: Double?
+        let message: String?
+    }
+
+    private func executeBuildAndCheck(release: Bool, clean: Bool) -> String {
+        let startTime = Date()
+        var commands: [String] = []
+
+        // Clean if requested
+        if clean {
+            commands.append("swift package clean")
+        }
+
+        // Build command
+        let config = release ? "-c release" : ""
+        commands.append("swift build \(config) 2>&1")
+
+        let fullCommand = commands.joined(separator: " && ")
+
+        let process = Process()
+        process.currentDirectoryURL = projectRoot
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", fullCommand]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            struct ErrorResult: Codable { let error: String }
+            return encodeToJSON(ErrorResult(error: "Failed to run build: \(error.localizedDescription)"))
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let duration = Date().timeIntervalSince(startTime)
+        let success = process.terminationStatus == 0
+
+        // Parse errors and warnings
+        var errors: [BuildIssue] = []
+        var warnings: [BuildIssue] = []
+
+        let lines = output.components(separatedBy: "\n")
+        for line in lines {
+            // Swift error format: /path/file.swift:123:45: error: message
+            // Also: /path/file.swift:123: error: message (no column)
+            let errorPattern = #"(.+\.swift):(\d+):(?:(\d+):)?\s*(error|warning):\s*(.+)"#
+            if let regex = try? NSRegularExpression(pattern: errorPattern, options: []),
+               let match = regex.firstMatch(in: line, options: [], range: NSRange(line.startIndex..., in: line)) {
+
+                let filePath = line[Range(match.range(at: 1), in: line)!]
+                let lineNum = Int(line[Range(match.range(at: 2), in: line)!]) ?? 0
+                let column = match.range(at: 3).location != NSNotFound
+                    ? Int(line[Range(match.range(at: 3), in: line)!])
+                    : nil
+                let issueType = line[Range(match.range(at: 4), in: line)!]
+                let message = String(line[Range(match.range(at: 5), in: line)!])
+
+                // Make path relative to project root
+                let relativePath = String(filePath).replacingOccurrences(of: projectRoot.path + "/", with: "")
+
+                let issue = BuildIssue(
+                    file: relativePath,
+                    line: lineNum,
+                    column: column,
+                    message: message,
+                    suggestion: suggestFix(for: message)
+                )
+
+                if issueType == "error" {
+                    errors.append(issue)
+                } else {
+                    warnings.append(issue)
+                }
+            }
+        }
+
+        let result = BuildResult(
+            success: success,
+            duration: round(duration * 100) / 100,
+            configuration: release ? "release" : "debug",
+            errors: errors,
+            warnings: warnings,
+            rawOutput: success ? nil : output  // Include raw output only on failure
+        )
+
+        return encodeToJSON(result)
+    }
+
+    private func suggestFix(for message: String) -> String? {
+        // Common Swift error patterns and suggestions
+        if message.contains("cannot convert value of type") && message.contains("Optional") {
+            return "Use optional binding (if let/guard let) or nil coalescing (??) to unwrap"
+        }
+        if message.contains("value of optional type") && message.contains("not unwrapped") {
+            return "Add '?' for optional chaining or '!' for force unwrap (unsafe)"
+        }
+        if message.contains("cannot find") && message.contains("in scope") {
+            return "Check spelling, add import, or ensure the type/function is accessible"
+        }
+        if message.contains("missing argument") {
+            return "Add the missing required parameter"
+        }
+        if message.contains("extra argument") {
+            return "Remove the extra parameter or check function signature"
+        }
+        if message.contains("type annotation missing") {
+            return "Add explicit type annotation"
+        }
+        if message.contains("ambiguous use of") {
+            return "Add explicit type annotation to resolve ambiguity"
+        }
+        if message.contains("protocol") && message.contains("requires") {
+            return "Implement the missing protocol requirement"
+        }
+        if message.contains("initializer") && message.contains("inaccessible") {
+            return "Use a public initializer or make the type's init accessible"
+        }
+        return nil
+    }
+
+    private func executeRunTests(filter: String?, verbose: Bool) -> String {
+        let startTime = Date()
+
+        // Build test command
+        var command = "swift test"
+        if let filter = filter {
+            command += " --filter '\(filter)'"
+        }
+        command += " 2>&1"
+
+        let process = Process()
+        process.currentDirectoryURL = projectRoot
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            struct ErrorResult: Codable { let error: String }
+            return encodeToJSON(ErrorResult(error: "Failed to run tests: \(error.localizedDescription)"))
+        }
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let duration = Date().timeIntervalSince(startTime)
+        let success = process.terminationStatus == 0
+
+        // Parse test results
+        var tests: [TestResult] = []
+        var passed = 0
+        var failed = 0
+        var skipped = 0
+
+        let lines = output.components(separatedBy: "\n")
+        for line in lines {
+            // Swift Testing format: ✔ Test name passed
+            // Swift Testing format: ✘ Test name failed
+            // XCTest format: Test Case '-[TestClass testMethod]' passed (0.001 seconds)
+
+            // Swift Testing pass
+            if line.contains("✔") || line.contains("passed") {
+                let testName = extractTestName(from: line)
+                if !testName.isEmpty {
+                    tests.append(TestResult(name: testName, status: "passed", duration: nil, message: nil))
+                    passed += 1
+                }
+            }
+            // Swift Testing fail
+            else if line.contains("✘") || (line.contains("failed") && !line.contains("tests failed")) {
+                let testName = extractTestName(from: line)
+                if !testName.isEmpty {
+                    tests.append(TestResult(name: testName, status: "failed", duration: nil, message: extractFailureMessage(from: lines, testName: testName)))
+                    failed += 1
+                }
+            }
+            // Skipped
+            else if line.contains("skipped") {
+                let testName = extractTestName(from: line)
+                if !testName.isEmpty {
+                    tests.append(TestResult(name: testName, status: "skipped", duration: nil, message: nil))
+                    skipped += 1
+                }
+            }
+        }
+
+        // Check if no tests found
+        let noTests = output.contains("no tests found") || output.contains("0 tests")
+
+        let result = TestRunResult(
+            success: success && !noTests,
+            duration: round(duration * 100) / 100,
+            passed: passed,
+            failed: failed,
+            skipped: skipped,
+            total: passed + failed + skipped,
+            noTestsFound: noTests,
+            tests: verbose ? tests : tests.filter { $0.status == "failed" },
+            rawOutput: verbose ? output : nil
+        )
+
+        return encodeToJSON(result)
+    }
+
+    private func extractTestName(from line: String) -> String {
+        // Try to extract test name from various formats
+        var name = line
+            .replacingOccurrences(of: "✔", with: "")
+            .replacingOccurrences(of: "✘", with: "")
+            .replacingOccurrences(of: "Test Case", with: "")
+            .replacingOccurrences(of: "passed", with: "")
+            .replacingOccurrences(of: "failed", with: "")
+            .trimmingCharacters(in: .whitespaces)
+
+        // Remove timing info like "(0.001 seconds)"
+        if let parenRange = name.range(of: #"\s*\([^)]+\)\s*$"#, options: .regularExpression) {
+            name = String(name[..<parenRange.lowerBound])
+        }
+
+        return name.trimmingCharacters(in: .whitespaces)
+    }
+
+    private func extractFailureMessage(from lines: [String], testName: String) -> String? {
+        // Look for assertion failure messages after the test name
+        var capture = false
+        var messages: [String] = []
+
+        for line in lines {
+            if line.contains(testName) && (line.contains("✘") || line.contains("failed")) {
+                capture = true
+                continue
+            }
+            if capture {
+                if line.contains("✔") || line.contains("✘") || line.isEmpty {
+                    break
+                }
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty {
+                    messages.append(trimmed)
+                }
+            }
+        }
+
+        return messages.isEmpty ? nil : messages.joined(separator: "\n")
     }
 
     private func encodeToJSON<T: Encodable>(_ value: T) -> String {
