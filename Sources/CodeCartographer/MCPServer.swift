@@ -866,6 +866,18 @@ class MCPServer {
                 )
             ),
             MCPTool(
+                name: "hybrid_search",
+                description: "Powerful search combining semantic understanding with code pattern matching. Find code that matches a concept AND contains specific patterns (e.g., 'authentication code with force unwraps'). At least one of query or pattern required.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "query": MCPProperty(type: "string", description: "Optional: semantic search query (e.g., 'authentication logic', 'network handling')"),
+                        "pattern": MCPProperty(type: "string", description: "Optional: regex pattern to match in source code (e.g., '!', 'self\\.', '\\.shared')"),
+                        "require_pattern": MCPProperty(type: "boolean", description: "If true (default), only return results matching pattern. If false, boost matching results but include non-matches."),
+                        "top_k": MCPProperty(type: "integer", description: "Optional: number of results to return (default: 10)")
+                    ]
+                )
+            ),
+            MCPTool(
                 name: "analyze_swiftui",
                 description: "Analyze SwiftUI patterns and state management (@State, @Binding, etc.)",
                 inputSchema: MCPInputSchema(
@@ -1131,6 +1143,12 @@ class MCPServer {
             }
             let topK = arguments["top_k"]?.intValue ?? 10
             return try executeSimilarTo(chunkId: chunkId, topK: topK)
+        case "hybrid_search":
+            let query = arguments["query"]?.stringValue
+            let pattern = arguments["pattern"]?.stringValue
+            let requirePattern = arguments["require_pattern"]?.boolValue ?? true
+            let topK = arguments["top_k"]?.intValue ?? 10
+            return try executeHybridSearch(query: query, pattern: pattern, requirePattern: requirePattern, topK: topK)
         case "analyze_swiftui":
             let path = arguments["path"]?.stringValue
             return try executeAnalyzeSwiftUI(path: path)
@@ -2625,7 +2643,226 @@ class MCPServer {
         
         return encodeToJSON(report)
     }
-    
+
+    private func executeHybridSearch(query: String?, pattern: String?, requirePattern: Bool, topK: Int) throws -> String {
+        // Validate at least one of query or pattern
+        guard query != nil || pattern != nil else {
+            throw NSError(domain: "MCP", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "At least one of 'query' or 'pattern' must be provided"
+            ])
+        }
+
+        // Check indexing status
+        let status = getIndexingStatus()
+        if status.isIndexing {
+            let percent = status.progress.1 > 0 ? Int(Double(status.progress.0) / Double(status.progress.1) * 100) : 0
+            struct IndexingReport: Codable {
+                let status: String
+                let progress: Int
+                let message: String
+            }
+            let report = IndexingReport(
+                status: "indexing",
+                progress: percent,
+                message: "Index is being built (\(percent)% complete). Please wait and try again."
+            )
+            return encodeToJSON(report)
+        }
+
+        guard let index = embeddingIndex, !index.isEmpty else {
+            startBackgroundIndexing()
+            struct IndexingReport: Codable {
+                let status: String
+                let message: String
+            }
+            let report = IndexingReport(
+                status: "indexing",
+                message: "Index not built. Background indexing started. Please wait and try again."
+            )
+            return encodeToJSON(report)
+        }
+
+        // Compile regex if pattern provided
+        var regex: NSRegularExpression? = nil
+        if let pattern = pattern {
+            do {
+                regex = try NSRegularExpression(pattern: pattern, options: [])
+            } catch {
+                throw NSError(domain: "MCP", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Invalid regex pattern: \(error.localizedDescription)"
+                ])
+            }
+        }
+
+        if verbose {
+            fputs("[MCP] Hybrid search - query: \(query ?? "none"), pattern: \(pattern ?? "none"), require: \(requirePattern)\n", stderr)
+        }
+
+        // Get candidates
+        var candidates: [(chunk: CodeChunk, score: Float)] = []
+
+        if let query = query {
+            // Semantic search with higher limit to allow filtering
+            let searchLimit = pattern != nil ? max(100, topK * 10) : topK
+            let results = try index.search(query: query, topK: searchLimit)
+            candidates = results.map { ($0.chunk, $0.score) }
+        } else {
+            // Pattern-only: get all chunks with neutral score
+            let allIds = index.getAllChunkIds()
+            candidates = allIds.compactMap { id -> (CodeChunk, Float)? in
+                guard let chunk = index.getChunk(id) else { return nil }
+                return (chunk, 0.5) // Neutral score for pattern-only search
+            }
+        }
+
+        // Filter/boost by pattern
+        struct ScoredResult {
+            let chunk: CodeChunk
+            var score: Float
+            var matchContext: String?
+            var matchCount: Int
+        }
+
+        var results: [ScoredResult] = []
+        let boostAmount: Float = 0.2
+
+        for (chunk, score) in candidates {
+            // Read source to check pattern
+            var matchContext: String? = nil
+            var matchCount = 0
+
+            if let regex = regex {
+                // Get source code for this chunk
+                let sourceLines = getSourceForChunk(chunk)
+                let sourceText = sourceLines.joined(separator: "\n")
+
+                let range = NSRange(sourceText.startIndex..., in: sourceText)
+                let matches = regex.matches(in: sourceText, options: [], range: range)
+                matchCount = matches.count
+
+                if matchCount > 0 {
+                    // Extract first few match contexts
+                    var contexts: [String] = []
+                    for match in matches.prefix(3) {
+                        if let matchRange = Range(match.range, in: sourceText) {
+                            // Get surrounding context (the line containing the match)
+                            let matchStr = String(sourceText[matchRange])
+                            let lineStart = sourceText[..<matchRange.lowerBound].lastIndex(of: "\n").map { sourceText.index(after: $0) } ?? sourceText.startIndex
+                            let lineEnd = sourceText[matchRange.upperBound...].firstIndex(of: "\n") ?? sourceText.endIndex
+                            let line = String(sourceText[lineStart..<lineEnd]).trimmingCharacters(in: .whitespaces)
+                            if line.count <= 120 {
+                                contexts.append(line)
+                            } else {
+                                contexts.append(matchStr)
+                            }
+                        }
+                    }
+                    matchContext = contexts.joined(separator: " | ")
+                    if matches.count > 3 {
+                        matchContext! += " (+\(matches.count - 3) more)"
+                    }
+                }
+
+                if requirePattern && matchCount == 0 {
+                    continue // Skip non-matches when pattern is required
+                }
+            }
+
+            // Calculate final score
+            var finalScore = score
+            if matchCount > 0 && !requirePattern {
+                // Boost score for matches when not required
+                finalScore = min(1.0, score + boostAmount)
+            }
+
+            results.append(ScoredResult(
+                chunk: chunk,
+                score: finalScore,
+                matchContext: matchContext,
+                matchCount: matchCount
+            ))
+        }
+
+        // Sort by score descending and take topK
+        results.sort { $0.score > $1.score }
+        results = Array(results.prefix(topK))
+
+        // Build response
+        struct HybridSearchReport: Codable {
+            let query: String?
+            let pattern: String?
+            let requirePattern: Bool
+            let resultsCount: Int
+            let totalMatches: Int
+            let results: [HybridResultItem]
+        }
+
+        struct HybridResultItem: Codable {
+            let score: Float
+            let file: String
+            let line: Int
+            let name: String
+            let kind: String
+            let signature: String
+            let layer: String
+            let matchCount: Int
+            let matchContext: String?
+            let embeddingText: String
+        }
+
+        let totalMatches = results.filter { $0.matchCount > 0 }.count
+
+        let items = results.map { result in
+            HybridResultItem(
+                score: result.score,
+                file: result.chunk.file,
+                line: result.chunk.line,
+                name: result.chunk.name,
+                kind: result.chunk.kind.rawValue,
+                signature: result.chunk.signature,
+                layer: result.chunk.layer,
+                matchCount: result.matchCount,
+                matchContext: result.matchContext,
+                embeddingText: result.chunk.embeddingText
+            )
+        }
+
+        let report = HybridSearchReport(
+            query: query,
+            pattern: pattern,
+            requirePattern: requirePattern,
+            resultsCount: results.count,
+            totalMatches: totalMatches,
+            results: items
+        )
+
+        return encodeToJSON(report)
+    }
+
+    /// Get source code lines for a chunk (for pattern matching)
+    private func getSourceForChunk(_ chunk: CodeChunk) -> [String] {
+        // Try to get from cache first
+        let filePath = chunk.file
+        if let parsedFile = cache.getFile(filePath) {
+            let lines = parsedFile.sourceText.components(separatedBy: "\n")
+            // Get lines for this chunk
+            let startLine = max(0, chunk.line - 1)
+            let endLine = min(lines.count, chunk.line - 1 + chunk.lineCount)
+            return Array(lines[startLine..<endLine])
+        }
+
+        // Fallback: try to read from project root
+        let fullPath = projectRoot.appendingPathComponent(filePath)
+        if let content = try? String(contentsOf: fullPath, encoding: .utf8) {
+            let lines = content.components(separatedBy: "\n")
+            let startLine = max(0, chunk.line - 1)
+            let endLine = min(lines.count, chunk.line - 1 + chunk.lineCount)
+            return Array(lines[startLine..<endLine])
+        }
+
+        return []
+    }
+
     private func executeAnalyzeSwiftUI(path: String?) throws -> String {
         let cacheKey = "analyze_swiftui:\(path ?? "all")"
         if let cached = cache.getCachedResult(for: cacheKey) {
