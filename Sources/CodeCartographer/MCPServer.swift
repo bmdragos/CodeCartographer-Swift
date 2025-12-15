@@ -394,8 +394,11 @@ class MCPServer {
         }
     }
 
+    private var projectExplicitlySet: Bool
+
     init(projectRoot: URL?, verbose: Bool = false) {
         // Start with provided project or current directory
+        self.projectExplicitlySet = projectRoot != nil
         self.projectRoot = projectRoot ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         self.cache = ASTCache(rootURL: self.projectRoot)
         self.verbose = verbose
@@ -429,8 +432,9 @@ class MCPServer {
         
         // Stop watching old project
         cache.stopWatching()
-        
+
         // Switch to new project
+        projectExplicitlySet = true
         projectRoot = url
         cache = ASTCache(rootURL: url)
         cache.verbose = verbose
@@ -489,11 +493,16 @@ class MCPServer {
                 self.cache.warmCache(verbose: self.verbose)
             }
 
-            // Automatically start background indexing with default provider (DGX)
-            if self.verbose {
-                fputs("[MCP] Auto-starting background indexing with DGX...\n", stderr)
+            // Only auto-start indexing if project was explicitly provided
+            // Otherwise wait for set_project to trigger indexing
+            if self.projectExplicitlySet {
+                if self.verbose {
+                    fputs("[MCP] Auto-starting background indexing with DGX...\n", stderr)
+                }
+                self.startBackgroundIndexing(providerName: "dgx", dgxEndpoint: MCPServer.defaultDGXEndpoint)
+            } else if self.verbose {
+                fputs("[MCP] No project specified, waiting for set_project...\n", stderr)
             }
-            self.startBackgroundIndexing(providerName: "dgx", dgxEndpoint: MCPServer.defaultDGXEndpoint)
 
             // Start watching cache file for cross-instance sync
             self.startCacheWatcher()
@@ -566,7 +575,7 @@ class MCPServer {
             ]),
             "serverInfo": .object([
                 "name": .string("CodeCartographer"),
-                "version": .string("2.0.4")
+                "version": .string("2.0.6")
             ])
         ])
         
@@ -1183,7 +1192,7 @@ class MCPServer {
         
         let info = VersionInfo(
             name: "CodeCartographer",
-            version: "2.0.4",
+            version: "2.0.6",
             description: "Swift Static Analyzer for AI Coding Assistants",
             toolCount: 40,
             currentProject: projectRoot.path,

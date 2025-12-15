@@ -2,7 +2,7 @@
 
 FastAPI server running NV-Embed-v2 on DGX Spark for CodeCartographer semantic search.
 
-**Version:** 2.0.4
+**Version:** 2.0.6
 
 > **Setup is finicky.** The GB10 GPU (Blackwell sm_121) is new hardware with limited PyTorch support. Follow this guide exactly.
 
@@ -109,7 +109,9 @@ If a client disconnects mid-job:
 - If valid, resumes from current progress
 - If invalid (server restarted), starts new job
 
-**Future improvement:** Client-side skip - filter out already-embedded chunks before sending to server, so cached embeddings aren't re-computed after server restart.
+**Future improvements:**
+- Client-side skip - filter out already-embedded chunks before sending to server, so cached embeddings aren't re-computed after server restart
+- Queue timeout handling - increase client timeout or add retry logic for jobs waiting behind long-running jobs
 
 ## Batch Size
 

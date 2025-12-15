@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 64  # Prevent OOM on large requests
 MAX_LENGTH = 32768   # NV-Embed-v2 max context
 
-SERVER_VERSION = "2.0.4"
+SERVER_VERSION = "2.0.6"
 
 app = FastAPI(
     title="NV-Embed-v2 Server",
@@ -62,15 +62,22 @@ app = FastAPI(
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Statistics tracking
+WARMUP_REQUESTS = 5  # First N requests excluded from avg (torch.compile JIT overhead)
 stats = {
     "requests": 0,
     "texts_embedded": 0,
-    "total_time_ms": 0,
+    "total_time_ms": 0,           # Only post-warmup requests
+    "warmup_time_ms": 0,          # Warmup requests tracked separately
     "errors": 0,
     "started_at": time.time(),
     "queue_waits": 0,  # Times a request had to wait for GPU
     "queue_depth": 0   # Current number of requests waiting for GPU
 }
+
+# Detailed timing metrics (recent N requests)
+LATENCY_HISTORY_SIZE = 100
+latency_history = deque(maxlen=LATENCY_HISTORY_SIZE)  # Store (total_ms, batch_size, queue_ms, gpu_ms)
+batch_size_counts = {}  # Track batch size distribution
 
 # Job Queue Manager for multi-instance indexing
 @dataclass
@@ -502,15 +509,16 @@ def get_progress():
 @app.post("/embed")
 async def embed(request: EmbedRequest) -> list[list[float]]:
     """Generate embeddings for a list of texts."""
-    start_time = time.time()
+    request_start = time.time()
+    batch_size = len(request.inputs)
 
     if not request.inputs:
         raise HTTPException(status_code=400, detail="inputs cannot be empty")
 
-    if len(request.inputs) > MAX_BATCH_SIZE:
+    if batch_size > MAX_BATCH_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=f"Batch size {len(request.inputs)} exceeds max {MAX_BATCH_SIZE}. Split into smaller batches."
+            detail=f"Batch size {batch_size} exceeds max {MAX_BATCH_SIZE}. Split into smaller batches."
         )
 
     # Track if we had to wait for the lock
@@ -518,36 +526,54 @@ async def embed(request: EmbedRequest) -> list[list[float]]:
     if had_to_wait:
         stats["queue_waits"] += 1
         stats["queue_depth"] += 1
-        logger.info(f"Request queued (GPU busy, depth={stats['queue_depth']}), batch size: {len(request.inputs)}")
+        logger.info(f"Request queued (GPU busy, depth={stats['queue_depth']}), batch size: {batch_size}")
 
     # Serialize GPU access to prevent CUDA conflicts
     try:
         async with gpu_lock:
+            queue_time = time.time()
+            queue_ms = (queue_time - request_start) * 1000
+
             try:
                 # Run the blocking GPU operation in a thread pool
                 def do_embed():
+                    gpu_start = time.time()
                     with torch.inference_mode():  # Faster than no_grad, disables view tracking
                         embeddings = model.encode(request.inputs, max_length=MAX_LENGTH)
                         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-                        return embeddings.cpu().tolist()
+                        result = embeddings.cpu().tolist()
+                    gpu_elapsed = (time.time() - gpu_start) * 1000
+                    return result, gpu_elapsed
 
-                result = await asyncio.get_event_loop().run_in_executor(None, do_embed)
+                result, gpu_ms = await asyncio.get_event_loop().run_in_executor(None, do_embed)
 
-                # Update stats
-                elapsed_ms = (time.time() - start_time) * 1000
+                # Calculate total time
+                total_ms = (time.time() - request_start) * 1000
+
+                # Update stats (track warmup separately)
                 stats["requests"] += 1
-                stats["texts_embedded"] += len(request.inputs)
-                stats["total_time_ms"] += elapsed_ms
+                stats["texts_embedded"] += batch_size
+                is_warmup = stats["requests"] <= WARMUP_REQUESTS
+                if is_warmup:
+                    stats["warmup_time_ms"] += total_ms
+                else:
+                    stats["total_time_ms"] += total_ms
 
-                wait_str = " (was queued)" if had_to_wait else ""
-                logger.info(f"Embedded {len(request.inputs)} texts in {elapsed_ms:.1f}ms{wait_str}")
+                # Track detailed timing (exclude warmup from history)
+                if not is_warmup:
+                    latency_history.append((total_ms, batch_size, queue_ms, gpu_ms))
+                batch_size_counts[batch_size] = batch_size_counts.get(batch_size, 0) + 1
+
+                warmup_str = " [warmup]" if is_warmup else ""
+                wait_str = f" (queued {queue_ms:.0f}ms)" if had_to_wait else ""
+                logger.info(f"Embedded {batch_size} texts in {total_ms:.1f}ms (gpu={gpu_ms:.0f}ms){wait_str}{warmup_str}")
 
                 return result
 
             except torch.cuda.OutOfMemoryError:
                 stats["errors"] += 1
                 torch.cuda.empty_cache()
-                logger.error(f"OOM with batch size {len(request.inputs)}")
+                logger.error(f"OOM with batch size {batch_size}")
                 raise HTTPException(
                     status_code=503,
                     detail="GPU out of memory. Try a smaller batch size."
@@ -582,7 +608,10 @@ def health() -> dict:
 def get_stats() -> dict:
     """Server statistics."""
     uptime = time.time() - stats["started_at"]
-    avg_time = stats["total_time_ms"] / max(stats["requests"], 1)
+    # Calculate avg excluding warmup requests
+    post_warmup_requests = max(stats["requests"] - WARMUP_REQUESTS, 0)
+    avg_time = stats["total_time_ms"] / max(post_warmup_requests, 1)
+    warmup_avg = stats["warmup_time_ms"] / min(stats["requests"], WARMUP_REQUESTS) if stats["requests"] > 0 else 0
     return {
         "version": SERVER_VERSION,
         "requests": stats["requests"],
@@ -591,11 +620,67 @@ def get_stats() -> dict:
         "queue_waits": stats["queue_waits"],  # Total requests that had to wait
         "queue_depth": stats["queue_depth"],  # Current requests waiting for GPU
         "avg_latency_ms": round(avg_time, 1),
+        "warmup_avg_ms": round(warmup_avg, 1),  # Warmup requests (first N, slower due to JIT)
+        "warmup_requests": min(stats["requests"], WARMUP_REQUESTS),
         "uptime_seconds": round(uptime, 1),
         "texts_per_second": round(stats["texts_embedded"] / max(uptime, 1), 2),
         "gpu_busy": gpu_lock.locked(),
         "gpu_memory_allocated_mb": round(torch.cuda.memory_allocated() / 1e6, 1),
         "gpu_memory_reserved_mb": round(torch.cuda.memory_reserved() / 1e6, 1)
+    }
+
+
+@app.get("/stats/detailed")
+def get_detailed_stats() -> dict:
+    """Detailed timing breakdown from recent requests."""
+    if not latency_history:
+        return {
+            "message": "No requests recorded yet",
+            "sample_count": 0
+        }
+
+    # Extract data from history
+    totals = [x[0] for x in latency_history]
+    batch_sizes = [x[1] for x in latency_history]
+    queue_times = [x[2] for x in latency_history]
+    gpu_times = [x[3] for x in latency_history]
+
+    def percentiles(data):
+        """Calculate min, p50, p95, max for a list of values."""
+        if not data:
+            return {"min": 0, "p50": 0, "p95": 0, "max": 0}
+        sorted_data = sorted(data)
+        n = len(sorted_data)
+        return {
+            "min": round(sorted_data[0], 1),
+            "p50": round(sorted_data[n // 2], 1),
+            "p95": round(sorted_data[int(n * 0.95)], 1),
+            "max": round(sorted_data[-1], 1)
+        }
+
+    # Calculate per-text latency for GPU time
+    per_text_gpu = [gpu / batch for gpu, batch in zip(gpu_times, batch_sizes) if batch > 0]
+
+    # Calculate overhead (total - gpu - queue)
+    overheads = [total - gpu - queue for total, gpu, queue in zip(totals, gpu_times, queue_times)]
+
+    return {
+        "sample_count": len(latency_history),
+        "latency_ms": {
+            "total": percentiles(totals),
+            "gpu": percentiles(gpu_times),
+            "queue": percentiles(queue_times),
+            "overhead": percentiles(overheads),  # HTTP, JSON, etc.
+            "per_text_gpu": percentiles(per_text_gpu)
+        },
+        "batch_sizes": {
+            "distribution": dict(sorted(batch_size_counts.items())),
+            "recent_avg": round(sum(batch_sizes) / len(batch_sizes), 1) if batch_sizes else 0
+        },
+        "throughput": {
+            "texts_per_second_recent": round(sum(batch_sizes) / (sum(totals) / 1000), 1) if sum(totals) > 0 else 0,
+            "avg_gpu_utilization_pct": round(sum(gpu_times) / sum(totals) * 100, 1) if sum(totals) > 0 else 0
+        }
     }
 
 

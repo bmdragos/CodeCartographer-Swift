@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Version:** 2.0.4
+**Version:** 2.0.6
 
 ## Build Commands
 
@@ -119,3 +119,4 @@ Non-blocking tools for checking indexing and DGX server status:
 
 ### Future Improvements
 - **Client-side skip:** Filter already-embedded chunks before sending to DGX, avoiding re-computation after server restart
+- **Queue timeout handling:** Increase client-side timeout or add retry logic for jobs waiting in queue (currently times out if GPU busy too long)
