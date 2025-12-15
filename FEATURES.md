@@ -9,13 +9,14 @@ Ideas for "AI superpowers" - features that maximize Claude's effectiveness when 
 
 ---
 
-## 1. Execution Loop 🔴
+## 1. Execution Loop 🟡
 **Priority: HIGH**
 
 Run code and tests, see actual behavior, not just static analysis.
 
 ### Capabilities
-- [ ] Run `swift test` and parse results
+- [x] Run `swift test` and parse results
+- [x] Build verification (`swift build`)
 - [ ] Execute specific test targets
 - [ ] Watch mode with incremental feedback
 - [ ] Test failure diagnosis with code context
@@ -23,7 +24,8 @@ Run code and tests, see actual behavior, not just static analysis.
 
 ### MCP Tools
 ```
-run_tests(target?, filter?, watch?)
+run_tests(target?, filter?)           # ✅ Implemented
+build_and_check()                     # ✅ Implemented
 diagnose_test_failure(test_name)
 execute_function(signature, mock_inputs)  # Future/sandbox
 ```
@@ -221,6 +223,15 @@ Persistent markers and notes attached to code locations.
 ---
 
 ## Changelog
+
+### 2025-12-15 (Afternoon)
+- Added `build_and_check` MCP tool
+- Added `run_tests` MCP tool
+- Set up Swift Testing framework (39 tests)
+  - 12 tests for CodeSmellAnalyzer
+  - 27 tests for ChunkExtractor
+- Fixed force cast detection (UnresolvedAsExprSyntax)
+- Fixed CallExtractorVisitor whitespace trimming bug
 
 ### 2025-12-15
 - Initial feature doc created
