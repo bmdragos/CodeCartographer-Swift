@@ -1576,8 +1576,8 @@ final class CallExtractorVisitor: SyntaxVisitor {
     }
     
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
-        let callText = node.calledExpression.description.trimmingCharacters(in: .whitespaces)
-        
+        let callText = node.calledExpression.description.trimmingCharacters(in: .whitespacesAndNewlines)
+
         // Extract the method name
         if let lastDot = callText.lastIndex(of: ".") {
             let typePart = String(callText[..<lastDot])
@@ -1588,13 +1588,13 @@ final class CallExtractorVisitor: SyntaxVisitor {
         } else {
             calls.append(callText)
         }
-        
+
         return .visitChildren
     }
-    
+
     override func visit(_ node: MemberAccessExprSyntax) -> SyntaxVisitorContinueKind {
         // Track type references
-        let base = node.base?.description.trimmingCharacters(in: .whitespaces) ?? ""
+        let base = node.base?.description.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if base.first?.isUppercase == true {
             types.append(base)
         }
