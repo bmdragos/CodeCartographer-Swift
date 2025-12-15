@@ -37,22 +37,22 @@ execute_function(signature, mock_inputs)  # Future/sandbox
 
 ---
 
-## 2. Deep Call Tracing 🔴
+## 2. Deep Call Tracing 🟢
 **Priority: HIGH**
 
 Full execution path analysis, not just immediate callers/callees.
 
 ### Capabilities
-- [ ] Forward trace: "What does X call, recursively?"
-- [ ] Backward trace: "What calls X, recursively?"
-- [ ] Path finding: "Show paths from A to B"
+- [x] Forward trace: "What does X call, recursively?"
+- [x] Backward trace: "What calls X, recursively?"
+- [x] Path finding: "Show paths from A to B"
 - [ ] Data flow: "Where does this value come from/go to?"
 
 ### MCP Tools
 ```
-trace_calls(from: symbol, depth: 5, direction: forward|backward|both)
-find_paths(from: symbol, to: symbol, max_paths: 10)
-trace_data_flow(variable, file, line)
+trace_calls(symbol, direction, depth)     # ✅ Implemented
+find_call_paths(from, to, max_paths)      # ✅ Implemented
+trace_data_flow(variable, file, line)     # Future
 ```
 
 ### Value
@@ -223,6 +223,13 @@ Persistent markers and notes attached to code locations.
 ---
 
 ## Changelog
+
+### 2025-12-15 (Evening)
+- Added Deep Call Tracing (50 tests total)
+  - `trace_calls` MCP tool (forward/backward recursive tracing)
+  - `find_call_paths` MCP tool (BFS path finding)
+  - CallGraphTracer with symbol resolution and cycle detection
+  - 11 tests for CallGraphTracer
 
 ### 2025-12-15 (Afternoon)
 - Added `build_and_check` MCP tool
