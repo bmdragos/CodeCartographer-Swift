@@ -62,23 +62,27 @@ trace_data_flow(variable, file, line)     # Future
 
 ---
 
-## 3. Auto-Fix Suggestions 🔴
+## 3. Auto-Fix Suggestions 🟡
 **Priority: MEDIUM**
 
 Don't just find issues - propose fixes with diffs.
 
 ### Capabilities
-- [ ] Force unwrap → guard let/if let transformation
+- [x] Force unwrap → guard let/if let transformation
+- [x] Force cast → conditional cast (as?)
+- [x] Force try → do-catch or try?
+- [x] Empty catch → add error logging
+- [x] IUO → regular optional
 - [ ] Strong delegate → weak delegate fix
 - [ ] Missing [weak self] in closures
 - [ ] God function → extracted methods
-- [ ] Generate the actual code diff
+- [ ] Generate unified diff format
 
 ### MCP Tools
 ```
-suggest_fix(smell_id) -> { original, fixed, diff }
-apply_fix(smell_id, confirm: true)
-batch_fix(smell_type, dry_run: true)
+suggest_fix(file, line, smell_type)  # ✅ Implemented
+apply_fix(smell_id, confirm: true)   # Future
+batch_fix(smell_type, dry_run: true) # Future
 ```
 
 ### Value
@@ -223,6 +227,14 @@ Persistent markers and notes attached to code locations.
 ---
 
 ## Changelog
+
+### 2025-12-15 (Night)
+- Added Auto-Fix Suggestions (67 tests total)
+  - `suggest_fix` MCP tool for generating code fixes
+  - AutoFixGenerator with pattern matching for 5 smell types
+  - Fixes: force unwrap, force cast, force try, empty catch, IUO
+  - Confidence levels: high/medium/low for fix safety
+  - 11 tests for AutoFixGenerator
 
 ### 2025-12-15 (Evening)
 - Added Deep Call Tracing (50 tests total)
