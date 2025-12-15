@@ -45,6 +45,22 @@ func findAllSwiftFiles(in directory: URL) -> [URL] {
     return findSwiftFiles(in: directory, includeTests: true)
 }
 
+/// Print baseline comparison results (helper to reduce nesting)
+func printBaselineComparison(improved: [String], regressed: [String]) {
+    fputs("\n📊 Comparison with baseline:\n", stderr)
+    if !improved.isEmpty {
+        fputs("   ✅ Improved:\n", stderr)
+        for item in improved { fputs("      \(item)\n", stderr) }
+    }
+    if !regressed.isEmpty {
+        fputs("   ⚠️ Regressed:\n", stderr)
+        for item in regressed { fputs("      \(item)\n", stderr) }
+    }
+    if improved.isEmpty && regressed.isEmpty {
+        fputs("   No significant changes\n", stderr)
+    }
+}
+
 // MARK: - Main
 
 // Available analysis modes with descriptions
@@ -968,18 +984,7 @@ func main() {
                 )
                 
                 if verbose {
-                    fputs("\n📊 Comparison with baseline:\n", stderr)
-                    if !improved.isEmpty {
-                        fputs("   ✅ Improved:\n", stderr)
-                        for item in improved { fputs("      \(item)\n", stderr) }
-                    }
-                    if !regressed.isEmpty {
-                        fputs("   ⚠️ Regressed:\n", stderr)
-                        for item in regressed { fputs("      \(item)\n", stderr) }
-                    }
-                    if improved.isEmpty && regressed.isEmpty {
-                        fputs("   No significant changes\n", stderr)
-                    }
+                    printBaselineComparison(improved: improved, regressed: regressed)
                 }
                 
                 outputJSON(delta, to: outputFile)
