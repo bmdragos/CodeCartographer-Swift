@@ -1636,8 +1636,8 @@ class MCPServer {
     /// Get file URLs for analyzers that don't yet support AST caching (auto-scans if needed)
     private func getFiles(for path: String?) throws -> [URL] {
         let parsedFiles = cache.getFiles(matching: path)
-        guard !parsedFiles.isEmpty || path == nil else {
-            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path!)"])
+        if let path = path, parsedFiles.isEmpty {
+            throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "File not found: \(path)"])
         }
         return parsedFiles.map { $0.url }
     }
@@ -2932,12 +2932,22 @@ class MCPServer {
     // MARK: - DGX Server Tools
 
     private func executeDGXHealth(endpoint: String) throws -> String {
-        let healthURL = URL(string: endpoint)!.deletingLastPathComponent().appendingPathComponent("health")
+        guard let baseURL = URL(string: endpoint) else {
+            throw NSError(domain: "DGX", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid DGX endpoint URL: \(endpoint)"
+            ])
+        }
+        let healthURL = baseURL.deletingLastPathComponent().appendingPathComponent("health")
         return try fetchDGXEndpoint(url: healthURL, description: "health")
     }
 
     private func executeDGXStats(endpoint: String) throws -> String {
-        let statsURL = URL(string: endpoint)!.deletingLastPathComponent().appendingPathComponent("stats")
+        guard let baseURL = URL(string: endpoint) else {
+            throw NSError(domain: "DGX", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Invalid DGX endpoint URL: \(endpoint)"
+            ])
+        }
+        let statsURL = baseURL.deletingLastPathComponent().appendingPathComponent("stats")
         return try fetchDGXEndpoint(url: statsURL, description: "stats")
     }
 
@@ -3027,15 +3037,16 @@ class MCPServer {
 
         if let start = startTime {
             let end = endTime ?? Date()
-            elapsed = end.timeIntervalSince(start)
+            let elapsedTime = end.timeIntervalSince(start)
+            elapsed = elapsedTime
 
             if isCurrentlyIndexing && progress.0 > 0 && progress.1 > 0 {
-                let secondsPerChunk = elapsed! / Double(progress.0)
+                let secondsPerChunk = elapsedTime / Double(progress.0)
                 let remaining = progress.1 - progress.0
                 eta = secondsPerChunk * Double(remaining)
-                rate = Double(progress.0) / elapsed!
+                rate = Double(progress.0) / elapsedTime
             } else if !isCurrentlyIndexing && progress.1 > 0 {
-                rate = Double(progress.1) / elapsed!
+                rate = Double(progress.1) / elapsedTime
             }
         }
 

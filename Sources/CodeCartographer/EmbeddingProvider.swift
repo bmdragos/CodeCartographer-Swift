@@ -165,6 +165,9 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
         var result: [[Float]]?
         var error: Error?
 
+        // Capture timeout by value to avoid retaining self in closure
+        let timeoutSeconds = timeout
+
         let semaphore = DispatchSemaphore(value: 0)
         let task = session.dataTask(with: request) { data, response, err in
             defer { semaphore.signal() }
@@ -172,7 +175,7 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
             if let err = err {
                 let nsError = err as NSError
                 if nsError.code == NSURLErrorTimedOut {
-                    error = EmbeddingError.networkError("Request timeout after \(self.timeout)s")
+                    error = EmbeddingError.networkError("Request timeout after \(timeoutSeconds)s")
                 } else {
                     error = EmbeddingError.networkError(err.localizedDescription)
                 }
