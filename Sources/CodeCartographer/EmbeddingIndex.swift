@@ -165,8 +165,8 @@ final class EmbeddingIndex {
     func search(query: String, topK: Int = 10) throws -> [SearchResult] {
         guard !isEmpty else { return [] }
 
-        // Embed query (expensive, no lock needed)
-        let queryEmbedding = try provider.embed(query)
+        // Embed query with isQuery=true (adds instruction prefix for better retrieval)
+        let queryEmbedding = try provider.embed(query, isQuery: true)
 
         // Search with the embedded vector
         return search(queryVector: queryEmbedding, topK: topK)

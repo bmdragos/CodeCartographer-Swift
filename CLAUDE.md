@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Version:** 2.0.6
+**Version:** 2.0.7
 
 ## Build Commands
 

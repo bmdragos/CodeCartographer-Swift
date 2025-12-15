@@ -575,7 +575,7 @@ class MCPServer {
             ]),
             "serverInfo": .object([
                 "name": .string("CodeCartographer"),
-                "version": .string("2.0.6")
+                "version": .string("2.0.7")
             ])
         ])
         
@@ -1192,7 +1192,7 @@ class MCPServer {
         
         let info = VersionInfo(
             name: "CodeCartographer",
-            version: "2.0.6",
+            version: "2.0.7",
             description: "Swift Static Analyzer for AI Coding Assistants",
             toolCount: 40,
             currentProject: projectRoot.path,

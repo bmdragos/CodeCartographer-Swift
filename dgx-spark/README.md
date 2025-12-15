@@ -2,7 +2,7 @@
 
 FastAPI server running NV-Embed-v2 on DGX Spark for CodeCartographer semantic search.
 
-**Version:** 2.0.6
+**Version:** 2.0.7
 
 > **Setup is finicky.** The GB10 GPU (Blackwell sm_121) is new hardware with limited PyTorch support. Follow this guide exactly.
 

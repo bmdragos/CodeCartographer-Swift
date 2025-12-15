@@ -6,16 +6,33 @@ import NaturalLanguage
 /// Protocol for embedding providers - enables swapping between local and remote implementations
 protocol EmbeddingProvider {
     /// Embed a single text into a vector
-    func embed(_ text: String) throws -> [Float]
-    
+    /// - Parameters:
+    ///   - text: Text to embed
+    ///   - isQuery: If true, this is a search query (DGX adds instruction prefix)
+    func embed(_ text: String, isQuery: Bool) throws -> [Float]
+
     /// Batch embed multiple texts (more efficient for some providers)
-    func embed(_ texts: [String]) throws -> [[Float]]
-    
+    /// - Parameters:
+    ///   - texts: Texts to embed
+    ///   - isQuery: If true, these are search queries (DGX adds instruction prefix)
+    func embed(_ texts: [String], isQuery: Bool) throws -> [[Float]]
+
     /// Dimension of output vectors
     var dimensions: Int { get }
-    
+
     /// Provider name for logging
     var name: String { get }
+}
+
+// Default implementations for backward compatibility
+extension EmbeddingProvider {
+    func embed(_ text: String) throws -> [Float] {
+        try embed(text, isQuery: false)
+    }
+
+    func embed(_ texts: [String]) throws -> [[Float]] {
+        try embed(texts, isQuery: false)
+    }
 }
 
 // MARK: - NLEmbedding Provider (Local, Apple)
@@ -37,15 +54,16 @@ final class NLEmbeddingProvider: EmbeddingProvider {
         self.dimensions = embedding.dimension
     }
     
-    func embed(_ text: String) throws -> [Float] {
+    func embed(_ text: String, isQuery: Bool = false) throws -> [Float] {
+        // NLEmbedding doesn't support instruction prefixes, ignore isQuery
         guard let vector = embedding.vector(for: text) else {
             throw EmbeddingError.embeddingFailed("Failed to embed text: \(text.prefix(50))...")
         }
         return vector.map { Float($0) }
     }
-    
-    func embed(_ texts: [String]) throws -> [[Float]] {
-        return try texts.map { try embed($0) }
+
+    func embed(_ texts: [String], isQuery: Bool = false) throws -> [[Float]] {
+        return try texts.map { try embed($0, isQuery: isQuery) }
     }
 }
 
@@ -91,16 +109,16 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
         self.session = URLSession(configuration: config)
     }
 
-    func embed(_ text: String) throws -> [Float] {
-        return try embed([text])[0]
+    func embed(_ text: String, isQuery: Bool = false) throws -> [Float] {
+        return try embed([text], isQuery: isQuery)[0]
     }
 
-    func embed(_ texts: [String]) throws -> [[Float]] {
+    func embed(_ texts: [String], isQuery: Bool = false) throws -> [[Float]] {
         var lastError: Error?
 
         for attempt in 0..<maxRetries {
             do {
-                return try performRequest(texts: texts)
+                return try performRequest(texts: texts, isQuery: isQuery)
             } catch let error as EmbeddingError {
                 lastError = error
 
@@ -131,15 +149,16 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
         throw lastError ?? EmbeddingError.embeddingFailed("Max retries exceeded")
     }
 
-    private func performRequest(texts: [String]) throws -> [[Float]] {
+    private func performRequest(texts: [String], isQuery: Bool = false) throws -> [[Float]] {
         // Build request matching our FastAPI server format
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("gzip", forHTTPHeaderField: "Accept-Encoding")  // Accept compressed responses
 
-        // Server expects: {"inputs": [...]}
-        let payload: [String: Any] = ["inputs": texts]
+        // Server expects: {"inputs": [...], "is_query": bool}
+        // is_query=true adds instruction prefix for better retrieval
+        let payload: [String: Any] = ["inputs": texts, "is_query": isQuery]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         // Synchronous request (for CLI tool)

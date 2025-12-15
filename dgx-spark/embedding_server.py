@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 MAX_BATCH_SIZE = 64  # Prevent OOM on large requests
 MAX_LENGTH = 32768   # NV-Embed-v2 max context
 
-SERVER_VERSION = "2.0.6"
+SERVER_VERSION = "2.0.7"
 
 app = FastAPI(
     title="NV-Embed-v2 Server",
@@ -332,8 +332,15 @@ warmup_ms = (time.time() - warmup_start) * 1000
 print(f"Warm-up complete ({warmup_ms:.0f}ms) - ready for requests!")
 
 
+# Instruction prefix for query embeddings (NV-Embed-v2 is instruction-tuned)
+# Documents/code chunks: no prefix needed
+# Queries: prefix helps model understand retrieval intent
+QUERY_INSTRUCTION = "Instruct: Given a code search query, retrieve relevant code that matches the query\nQuery: "
+
+
 class EmbedRequest(BaseModel):
     inputs: list[str]
+    is_query: bool = False  # Set True for search queries to add instruction prefix
 
 
 class ProgressUpdate(BaseModel):
@@ -521,6 +528,12 @@ async def embed(request: EmbedRequest) -> list[list[float]]:
             detail=f"Batch size {batch_size} exceeds max {MAX_BATCH_SIZE}. Split into smaller batches."
         )
 
+    # Apply instruction prefix for queries (improves retrieval accuracy)
+    if request.is_query:
+        texts = [QUERY_INSTRUCTION + text for text in request.inputs]
+    else:
+        texts = request.inputs
+
     # Track if we had to wait for the lock
     had_to_wait = gpu_lock.locked()
     if had_to_wait:
@@ -539,7 +552,7 @@ async def embed(request: EmbedRequest) -> list[list[float]]:
                 def do_embed():
                     gpu_start = time.time()
                     with torch.inference_mode():  # Faster than no_grad, disables view tracking
-                        embeddings = model.encode(request.inputs, max_length=MAX_LENGTH)
+                        embeddings = model.encode(texts, max_length=MAX_LENGTH)
                         embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
                         result = embeddings.cpu().tolist()
                     gpu_elapsed = (time.time() - gpu_start) * 1000
