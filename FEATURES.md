@@ -92,7 +92,36 @@ batch_fix(smell_type, dry_run: true) # Future
 
 ---
 
-## 4. Diff Analysis 🔴
+## 4. Semantic Search 🟢
+**Priority: HIGH**
+
+Natural language code search powered by embeddings.
+
+### Capabilities
+- [x] Build vector index from code chunks
+- [x] Natural language queries ("authentication logic", "error handling")
+- [x] Hybrid search (semantic + regex pattern matching)
+- [x] Find similar code chunks
+- [x] Incremental index updates on file changes
+- [x] Cross-instance cache sharing (multiple editors)
+
+### MCP Tools
+```
+build_search_index(provider?)           # ✅ Implemented (DGX default)
+semantic_search(query, top_k?)          # ✅ Implemented
+hybrid_search(query?, pattern?, top_k?) # ✅ Implemented
+similar_to(chunk_id, top_k?)            # ✅ Implemented
+indexing_status()                       # ✅ Implemented
+```
+
+### Value
+- Find code by intent, not just keywords
+- Discover related code across the codebase
+- Combine meaning with patterns for precise results
+
+---
+
+## 6. Diff Analysis 🔴
 **Priority: MEDIUM**
 
 Understand changes and their impact over time.
@@ -117,7 +146,7 @@ compare_snapshots(before_json, after_json)
 
 ---
 
-## 5. Build Error Diagnosis 🔴
+## 7. Build Error Diagnosis 🔴
 **Priority: MEDIUM**
 
 When builds fail, automatically diagnose and suggest fixes.
@@ -140,7 +169,7 @@ fix_build() -> attempts incremental fixes
 
 ---
 
-## 6. Explain Tool 🔴
+## 8. Explain Tool 🔴
 **Priority: LOW**
 
 Generate high-level explanations of code structure and intent.
@@ -165,7 +194,7 @@ explain_system(entry_point)
 
 ---
 
-## 7. Pattern Templates / Scaffolding 🔴
+## 9. Pattern Templates / Scaffolding 🔴
 **Priority: LOW**
 
 Generate boilerplate following existing codebase patterns.
@@ -189,7 +218,7 @@ generate_mcp_tool(name, description, parameters)
 
 ---
 
-## 8. Inline Annotations / Insights 🔴
+## 10. Inline Annotations / Insights 🔴
 **Priority: LOW**
 
 Persistent markers and notes attached to code locations.
@@ -226,7 +255,29 @@ Persistent markers and notes attached to code locations.
 
 ---
 
+## Known Issues
+
+### suggest_fix Edge Cases
+- Nested expressions like `String(parts.last!)` produce malformed output (captures `String(parts.last` as expression)
+- Line numbers can shift between smell detection and fix application - use grep to verify
+
+### main.swift God Function
+- 840 lines, cyclomatic complexity 148
+- Should be refactored to validate our own tools (eat our own dogfood)
+
+---
+
 ## Changelog
+
+### 2025-12-15 (Late Night)
+- **Dogfooding v2.2.0** - comprehensive verification of all 41 MCP tools
+  - Verified semantic search (402 chunks indexed in 41s with DGX)
+  - Verified hybrid search (semantic + regex pattern matching)
+  - Verified call tracing (trace_calls, find_call_paths)
+  - Verified auto-fix suggestions (5 smell types)
+  - Documented known edge cases
+- Added Semantic Search to FEATURES.md (was missing!)
+- Version bump to 2.2.0
 
 ### 2025-12-15 (Night)
 - Added Auto-Fix Suggestions (67 tests total)
