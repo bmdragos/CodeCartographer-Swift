@@ -140,7 +140,7 @@ func main() {
     
     // Show version
     if args.contains("--version") || args.contains("-v") {
-        print("CodeCartographer v1.6.0")
+        print("CodeCartographer v2.2.0")
         print("Swift Static Analyzer for AI-Assisted Refactoring")
         return
     }
