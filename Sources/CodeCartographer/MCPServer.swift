@@ -650,6 +650,31 @@ class MCPServer {
                 )
             ),
             MCPTool(
+                name: "trace_calls",
+                description: "Trace call relationships recursively. Use direction='forward' to see what a function calls, 'backward' to see what calls it.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "symbol": MCPProperty(type: "string", description: "The symbol to trace (e.g., 'AuthManager.login', 'fetchUser')"),
+                        "direction": MCPProperty(type: "string", description: "Trace direction: 'forward' (what it calls) or 'backward' (what calls it). Default: forward"),
+                        "depth": MCPProperty(type: "integer", description: "Maximum recursion depth. Default: 5")
+                    ],
+                    required: ["symbol"]
+                )
+            ),
+            MCPTool(
+                name: "find_call_paths",
+                description: "Find execution paths between two symbols. Shows how control flows from source to target.",
+                inputSchema: MCPInputSchema(
+                    properties: [
+                        "from": MCPProperty(type: "string", description: "Source symbol (e.g., 'handleUserInput')"),
+                        "to": MCPProperty(type: "string", description: "Target symbol (e.g., 'saveToDatabase')"),
+                        "max_paths": MCPProperty(type: "integer", description: "Maximum paths to return. Default: 5"),
+                        "max_depth": MCPProperty(type: "integer", description: "Maximum path length. Default: 10")
+                    ],
+                    required: ["from", "to"]
+                )
+            ),
+            MCPTool(
                 name: "suggest_refactoring",
                 description: "Get extraction suggestions for god functions",
                 inputSchema: MCPInputSchema(
@@ -1076,6 +1101,23 @@ class MCPServer {
                 throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: symbol"])
             }
             return try executeCheckImpact(symbol: symbol)
+        case "trace_calls":
+            guard let symbol = arguments["symbol"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: symbol"])
+            }
+            let direction = arguments["direction"]?.stringValue ?? "forward"
+            let depth = arguments["depth"]?.intValue ?? 5
+            return try executeTraceCalls(symbol: symbol, direction: direction, depth: depth)
+        case "find_call_paths":
+            guard let from = arguments["from"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: from"])
+            }
+            guard let to = arguments["to"]?.stringValue else {
+                throw NSError(domain: "MCP", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required parameter: to"])
+            }
+            let maxPaths = arguments["max_paths"]?.intValue ?? 5
+            let maxDepth = arguments["max_depth"]?.intValue ?? 10
+            return try executeFindCallPaths(from: from, to: to, maxPaths: maxPaths, maxDepth: maxDepth)
         case "suggest_refactoring":
             let path = arguments["path"]?.stringValue
             return try executeSuggestRefactoring(path: path)
@@ -1528,7 +1570,7 @@ class MCPServer {
             if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
             return cached
         }
-        
+
         let parsedFiles = cache.parsedFiles
         let analyzer = ImpactAnalyzer()
         let report = analyzer.analyze(parsedFiles: parsedFiles, targetSymbol: symbol)
@@ -1536,7 +1578,50 @@ class MCPServer {
         cache.cacheResult(result, for: cacheKey)
         return result
     }
-    
+
+    private func executeTraceCalls(symbol: String, direction: String, depth: Int) throws -> String {
+        let cacheKey = "trace_calls:\(symbol):\(direction):\(depth)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+
+        let parsedFiles = cache.parsedFiles
+        let extractor = ChunkExtractor(cache: cache, verbose: verbose)
+        let chunks = extractor.extractChunks(from: parsedFiles)
+        let tracer = CallGraphTracer(chunks: chunks)
+
+        let trace: CallGraphTracer.CallTrace
+        if direction == "backward" {
+            trace = tracer.traceBackward(from: symbol, maxDepth: depth)
+        } else {
+            trace = tracer.traceForward(from: symbol, maxDepth: depth)
+        }
+
+        let result = encodeToJSON(trace)
+        cache.cacheResult(result, for: cacheKey)
+        return result
+    }
+
+    private func executeFindCallPaths(from: String, to: String, maxPaths: Int, maxDepth: Int) throws -> String {
+        let cacheKey = "find_call_paths:\(from):\(to):\(maxPaths):\(maxDepth)"
+        if let cached = cache.getCachedResult(for: cacheKey) {
+            if verbose { fputs("[MCP] Cache hit: \(cacheKey)\n", stderr) }
+            return cached
+        }
+
+        let parsedFiles = cache.parsedFiles
+        let extractor = ChunkExtractor(cache: cache, verbose: verbose)
+        let chunks = extractor.extractChunks(from: parsedFiles)
+        let tracer = CallGraphTracer(chunks: chunks)
+
+        let pathResult = tracer.findPaths(from: from, to: to, maxPaths: maxPaths, maxDepth: maxDepth)
+
+        let result = encodeToJSON(pathResult)
+        cache.cacheResult(result, for: cacheKey)
+        return result
+    }
+
     private func executeSuggestRefactoring(path: String?) throws -> String {
         let cacheKey = "suggest_refactoring:\(path ?? "all")"
         if let cached = cache.getCachedResult(for: cacheKey) {
