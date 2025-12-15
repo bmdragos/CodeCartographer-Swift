@@ -19,11 +19,13 @@ public final class ParsedFile {
     public var ast: SourceFileSyntax {
         lock.lock()
         defer { lock.unlock() }
-        
-        if _ast == nil {
-            _ast = Parser.parse(source: sourceText)
+
+        if let existingAST = _ast {
+            return existingAST
         }
-        return _ast!
+        let parsed = Parser.parse(source: sourceText)
+        _ast = parsed
+        return parsed
     }
     
     /// Check if AST has been parsed (without triggering parse)

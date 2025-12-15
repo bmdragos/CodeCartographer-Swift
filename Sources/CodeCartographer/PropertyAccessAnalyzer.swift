@@ -262,7 +262,7 @@ class PropertyAccessAnalyzer {
         }
         
         let dateFormatter = ISO8601DateFormatter()
-        let reportType = filterProperty != nil ? "\(targetPattern) → \(filterProperty!)" : targetPattern
+        let reportType = filterProperty.map { "\(targetPattern) → \($0)" } ?? targetPattern
         
         return PropertyAccessReport(
             analyzedAt: dateFormatter.string(from: Date()),

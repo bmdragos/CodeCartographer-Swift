@@ -243,9 +243,13 @@ class MCPServer {
         
         // Create directory if needed
         try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-        
+
         // Hash project path for filename (SHA256 for uniqueness, no truncation issues)
-        let pathData = projectRoot.path.data(using: .utf8)!
+        guard let pathData = projectRoot.path.data(using: .utf8) else {
+            // Fallback to simple hash if UTF-8 encoding fails (shouldn't happen for file paths)
+            let fallbackHash = String(projectRoot.path.hashValue, radix: 16)
+            return cacheDir.appendingPathComponent("\(fallbackHash).json")
+        }
         var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
         pathData.withUnsafeBytes { ptr in
             _ = CC_SHA256(ptr.baseAddress, CC_LONG(pathData.count), &hash)
@@ -2023,16 +2027,16 @@ class MCPServer {
                     var serverRecommendedBatchSize: Int? = nil
                     if let existingJobId = cachedJobId {
                         let jobStatus = self.checkJobStatus(jobId: existingJobId)
-                        if jobStatus == "active" || jobStatus == "queued" {
+                        if let status = jobStatus, status == "active" || status == "queued" {
                             // Resume existing job
                             self.dgxJobId = existingJobId
                             if self.verbose {
-                                fputs("[MCP] Resuming existing job \(existingJobId) (status: \(jobStatus!))\n", stderr)
+                                fputs("[MCP] Resuming existing job \(existingJobId) (status: \(status))\n", stderr)
                             }
                         } else {
                             // Job expired/completed/failed, register new one
-                            if self.verbose && jobStatus != nil {
-                                fputs("[MCP] Cached job \(existingJobId) is \(jobStatus!), registering new job\n", stderr)
+                            if self.verbose, let status = jobStatus {
+                                fputs("[MCP] Cached job \(existingJobId) is \(status), registering new job\n", stderr)
                             }
                             if let result = self.registerJobWithDGX(totalChunks: chunksToEmbed.count) {
                                 self.dgxJobId = result.jobId
@@ -2757,10 +2761,11 @@ class MCPServer {
                             }
                         }
                     }
-                    matchContext = contexts.joined(separator: " | ")
+                    var contextStr = contexts.joined(separator: " | ")
                     if matches.count > 3 {
-                        matchContext! += " (+\(matches.count - 3) more)"
+                        contextStr += " (+\(matches.count - 3) more)"
                     }
+                    matchContext = contextStr
                 }
 
                 if requirePattern && matchCount == 0 {

@@ -1238,10 +1238,10 @@ final class ChunkVisitor: SyntaxVisitor {
         // Extract return type
         let returnType = node.signature.returnClause?.type.description
             .trimmingCharacters(in: .whitespaces)
-        
+
         // Build signature
-        let signature = "func \(name)(\(parameters.joined(separator: ":") + (parameters.isEmpty ? "" : ":")))" +
-                       (returnType != nil ? " -> \(returnType!)" : "")
+        let returnSuffix = returnType.map { " -> \($0)" } ?? ""
+        let signature = "func \(name)(\(parameters.joined(separator: ":") + (parameters.isEmpty ? "" : ":")))" + returnSuffix
         
         // Extract visibility
         let visibility = extractVisibility(from: node.modifiers)

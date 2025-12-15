@@ -264,9 +264,10 @@ class MermaidGenerator {
         
         // Add cross-file dependencies based on type usage
         // (This would need more analysis - for now, use inheritance)
-        for def in typeMap.definitions where def.superclass != nil {
+        for def in typeMap.definitions {
+            guard let superclass = def.superclass else { continue }
             let defFile = URL(fileURLWithPath: def.file).lastPathComponent
-            if let superclassFile = typeMap.typeToFile[def.superclass!] {
+            if let superclassFile = typeMap.typeToFile[superclass] {
                 let superFileName = URL(fileURLWithPath: superclassFile).lastPathComponent
                 if defFile != superFileName {
                     let safeFrom = sanitize(defFile)
