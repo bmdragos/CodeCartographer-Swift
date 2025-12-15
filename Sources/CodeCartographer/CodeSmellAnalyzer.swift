@@ -212,25 +212,34 @@ final class CodeSmellVisitor: SyntaxVisitor {
     
     // Track nesting level
     override func visit(_ node: IfExprSyntax) -> SyntaxVisitorContinueKind {
-        nestingLevel += 1
-        maxNestingInFile = max(maxNestingInFile, nestingLevel)
+        // Check if this is an "else if" (if that's a direct child of another if's else clause)
+        // In SwiftSyntax, "else if" is represented as an IfExprSyntax inside the elseBody of another IfExprSyntax
+        let isElseIf = node.parent?.as(IfExprSyntax.self)?.elseBody?.as(IfExprSyntax.self) == node
 
-        if nestingLevel > 4 {
-            let type = CodeSmell.SmellType.deepNesting
-            smells.append(CodeSmell(
-                file: filePath,
-                line: lineNumber(for: node.position),
-                type: type,
-                code: "Nesting level: \(nestingLevel)",
-                suggestion: "Extract nested logic into separate functions or use guard",
-                severity: type.severity
-            ))
+        if !isElseIf {
+            nestingLevel += 1
+            maxNestingInFile = max(maxNestingInFile, nestingLevel)
+
+            if nestingLevel > 4 {
+                let type = CodeSmell.SmellType.deepNesting
+                smells.append(CodeSmell(
+                    file: filePath,
+                    line: lineNumber(for: node.position),
+                    type: type,
+                    code: "Nesting level: \(nestingLevel)",
+                    suggestion: "Extract nested logic into separate functions or use guard",
+                    severity: type.severity
+                ))
+            }
         }
         return .visitChildren
     }
-    
+
     override func visitPost(_ node: IfExprSyntax) {
-        nestingLevel -= 1
+        let isElseIf = node.parent?.as(IfExprSyntax.self)?.elseBody?.as(IfExprSyntax.self) == node
+        if !isElseIf {
+            nestingLevel -= 1
+        }
     }
     
     // Detect magic numbers

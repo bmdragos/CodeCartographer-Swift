@@ -2725,6 +2725,7 @@ class MCPServer {
             var score: Float
             var matchContext: String?
             var matchCount: Int
+            var sourceLines: [String]
         }
 
         var results: [ScoredResult] = []
@@ -2735,9 +2736,11 @@ class MCPServer {
             var matchContext: String? = nil
             var matchCount = 0
 
+            // Always get source code for inline display
+            let sourceLines = getSourceForChunk(chunk)
+
             if let regex = regex {
-                // Get source code for this chunk
-                let sourceLines = getSourceForChunk(chunk)
+                // Check pattern against source
                 let sourceText = sourceLines.joined(separator: "\n")
 
                 let range = NSRange(sourceText.startIndex..., in: sourceText)
@@ -2784,7 +2787,8 @@ class MCPServer {
                 chunk: chunk,
                 score: finalScore,
                 matchContext: matchContext,
-                matchCount: matchCount
+                matchCount: matchCount,
+                sourceLines: sourceLines
             ))
         }
 
@@ -2813,6 +2817,7 @@ class MCPServer {
             let matchCount: Int
             let matchContext: String?
             let embeddingText: String
+            let source: String
         }
 
         let totalMatches = results.filter { $0.matchCount > 0 }.count
@@ -2828,7 +2833,8 @@ class MCPServer {
                 layer: result.chunk.layer,
                 matchCount: result.matchCount,
                 matchContext: result.matchContext,
-                embeddingText: result.chunk.embeddingText
+                embeddingText: result.chunk.embeddingText,
+                source: result.sourceLines.joined(separator: "\n")
             )
         }
 
@@ -2850,7 +2856,6 @@ class MCPServer {
         let filePath = chunk.file
         if let parsedFile = cache.getFile(filePath) {
             let lines = parsedFile.sourceText.components(separatedBy: "\n")
-            // Get lines for this chunk
             let startLine = max(0, chunk.line - 1)
             let endLine = min(lines.count, chunk.line - 1 + chunk.lineCount)
             return Array(lines[startLine..<endLine])
