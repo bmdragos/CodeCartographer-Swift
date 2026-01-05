@@ -44,13 +44,13 @@ CodeCartographer is an MCP server providing 40+ static analysis tools for Swift 
 
 **EmbeddingProvider.swift** - Pluggable embedding system:
 - `NLEmbeddingProvider` - Local Apple NLEmbedding (512 dims, no setup)
-- `DGXEmbeddingProvider` - Remote GPU server for NV-Embed-v2 (4096 dims)
+- `DGXEmbeddingProvider` - Remote GPU server for llama-embed-nemotron-8b (4096 dims)
 
 **EmbeddingIndex.swift** - In-memory vector index with cosine similarity search. Features:
 - Thread-safe with pthread_rwlock_t (reader-writer lock)
 - Incremental updates when files change
 - Cross-process file locking (flock) for multi-instance safety
-- Schema versioning (v6) - cache auto-invalidates on schema changes
+- Schema versioning (v7) - cache auto-invalidates on schema changes
 - Job ID tracking for DGX job resume
 
 ### Analyzer Pattern
@@ -94,7 +94,7 @@ Run `codecart --list` to see all 30+ analysis modes. Common ones:
 Cache location: `~/.codecartographer/cache/<project-hash>.json`
 
 ### Indexing Behavior
-- **Default provider:** DGX (NV-Embed-v2, 4096 dims)
+- **Default provider:** DGX (llama-embed-nemotron-8b, 4096 dims)
 - **Batch size:** Dynamic from server `/capabilities` (typically 48-64 for DGX)
 - **Checkpoints:** Saved every 500 chunks for crash recovery
 - **Auto-start:** Indexing begins automatically on server startup

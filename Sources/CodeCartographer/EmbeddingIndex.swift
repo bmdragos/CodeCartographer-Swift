@@ -515,7 +515,7 @@ struct SearchResult: Codable {
 
 /// Schema version - bump this when chunk extraction logic changes significantly
 /// This ensures stale caches are invalidated when the extraction produces different chunks
-let kIndexSchemaVersion = 6  // v6: Added dgxJobId for job queue resume
+let kIndexSchemaVersion = 7  // v7: Model changed from NV-Embed-v2 to llama-embed-nemotron-8b
 
 struct IndexData: Codable {
     let schemaVersion: Int?  // nil for old caches (pre-v3)

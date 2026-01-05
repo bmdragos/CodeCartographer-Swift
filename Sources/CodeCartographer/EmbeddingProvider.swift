@@ -69,7 +69,7 @@ final class NLEmbeddingProvider: EmbeddingProvider {
 
 // MARK: - DGX Provider (Local GPU Server)
 
-/// Uses a local DGX Spark server for embeddings (NV-Embed-v2)
+/// Uses a local DGX Spark server for embeddings (llama-embed-nemotron-8b)
 /// Endpoint format: POST /embed with {"inputs": [...]} → [[...]]
 final class DGXEmbeddingProvider: EmbeddingProvider {
     let endpoint: URL
@@ -85,12 +85,12 @@ final class DGXEmbeddingProvider: EmbeddingProvider {
     /// Initialize DGX embedding provider
     /// - Parameters:
     ///   - endpoint: Full URL to the /embed endpoint (e.g., http://192.168.1.159:8080/embed)
-    ///   - modelName: Model name for logging (default: NV-Embed-v2)
-    ///   - dimensions: Output vector dimensions (default: 4096 for NV-Embed-v2)
+    ///   - modelName: Model name for logging (default: llama-embed-nemotron-8b)
+    ///   - dimensions: Output vector dimensions (default: 4096 for llama-embed-nemotron-8b)
     ///   - timeout: Request timeout in seconds (default: 120)
     ///   - maxRetries: Max retry attempts for transient failures (default: 3)
     ///   - verbose: Log retry attempts (default: false)
-    init(endpoint: URL, modelName: String = "NV-Embed-v2", dimensions: Int = 4096,
+    init(endpoint: URL, modelName: String = "llama-embed-nemotron-8b", dimensions: Int = 4096,
          timeout: TimeInterval = 120, maxRetries: Int = 3, verbose: Bool = false) {
         self.endpoint = endpoint
         self.modelName = modelName
